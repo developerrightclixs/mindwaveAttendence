@@ -13,7 +13,9 @@
  * SQLite put no payroll calculation at risk.
  */
 const { all, one, run, tx, audit, getSetting, setSetting, nowStamp } = require('../db');
-const { evaluateDay, summarise, resolveWorkDate } = require('./attendance');
+const {
+  evaluateDay, summarise, resolveWorkDate, stampDateFor,
+} = require('./attendance');
 const { isoStamp, dateRange, addDays, monthBounds, isoWeekday } = require('./dates');
 
 // --- lookups ---------------------------------------------------------------
@@ -565,12 +567,11 @@ async function recordSelfEntry({ employeeId, workDate, inTime, outTime, note, ac
   const emp = await one('SELECT shift_id FROM employees WHERE id = ?', employeeId);
   const shift = emp && emp.shift_id ? await getShift(emp.shift_id) : null;
 
-  // On an overnight shift the end time belongs to the following calendar day,
-  // while both punches still file against the night that started.
-  const overnight = shift && shift.end_time <= shift.start_time;
-  const outDate = overnight && outTime && outTime < inTime
-    ? addDays(workDate, 1)
-    : workDate;
+  // Both punches file against the night that started; the end time may fall on
+  // the following calendar day. Same cut-over as everywhere else, so admin
+  // corrections and employee entries can never disagree about a given time.
+  const inDate = stampDateFor(shift, workDate, inTime);
+  const outDate = outTime ? stampDateFor(shift, workDate, outTime) : workDate;
 
   const reason = (note || '').trim() || 'Added by the employee';
 
@@ -578,7 +579,7 @@ async function recordSelfEntry({ employeeId, workDate, inTime, outTime, note, ac
     const out = [];
     out.push(await recordPunch({
       employeeId, kind: 'in', source: 'self', note: reason, actorId,
-      stamp: `${workDate} ${inTime}:00`, workDate,
+      stamp: `${inDate} ${inTime}:00`, workDate,
     }, t));
     if (outTime) {
       out.push(await recordPunch({

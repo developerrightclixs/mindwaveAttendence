@@ -102,6 +102,24 @@ function resolveWorkDate(shift, stamp) {
 }
 
 /**
+ * The calendar date a wall-clock time falls on, for a given business date.
+ *
+ * The inverse of resolveWorkDate, and it uses the same cut-over so the two can
+ * never disagree: on a 20:00-05:00 night the split is 12:30, so 05:10 and even
+ * a late 07:00 finish belong to the morning after, while 19:45 and 20:05 sit on
+ * the night's own date. Getting this wrong files a check-out BEFORE its
+ * check-in and the night reads as never closed.
+ */
+function stampDateFor(shift, workDate, timeHHMM) {
+  if (!shift || !shift.start_time || !shift.end_time) return workDate;
+  const start = timeToMinutes(shift.start_time);
+  const end = timeToMinutes(shift.end_time);
+  if (end > start) return workDate;                 // ordinary day shift
+  const cutover = Math.floor((end + start) / 2);
+  return timeToMinutes(timeHHMM) < cutover ? addDays(workDate, 1) : workDate;
+}
+
+/**
  * Pair a day's punches into in/out sessions.
  *
  * Punches are a raw stream, and real people produce messy streams: a double
@@ -343,5 +361,5 @@ function summarise(days) {
 module.exports = {
   DEFAULT_SHIFT, STATUS_LABELS, evaluateDay, summarise,
   expectedMinutes, shiftWindow, offDays, buildSessions, minutesIntoDay,
-  resolveWorkDate,
+  resolveWorkDate, stampDateFor,
 };

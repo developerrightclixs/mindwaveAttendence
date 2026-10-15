@@ -7,7 +7,7 @@ const {
 const svc = require('../lib/service');
 const { isoDate, prettyDate, addDays } = require('../lib/dates');
 const importer = require('../lib/import');
-const { STATUS_LABELS } = require('../lib/attendance');
+const { STATUS_LABELS, stampDateFor } = require('../lib/attendance');
 
 const router = express.Router();
 
@@ -102,6 +102,14 @@ router.post('/register/punch', adminOnly, async (req, res) => {
     return res.redirect(`/admin/register?date=${date}`);
   }
 
+  // On an overnight shift the morning end of the night falls on the NEXT
+  // calendar day. Stamping it on the work date puts a 05:10 check-out before
+  // the 20:05 check-in, and the night reads as never closed - which is what
+  // this form used to do.
+  const emp = await svc.getEmployee(employeeId);
+  const shift = emp && emp.shift_id ? await svc.getShift(emp.shift_id) : null;
+  const stampDate = stampDateFor(shift, date, time);
+
   try {
     await svc.recordPunch({
       employeeId,
@@ -109,10 +117,11 @@ router.post('/register/punch', adminOnly, async (req, res) => {
       source: 'admin',
       note: req.body.note || 'Added by ' + req.user.name,
       actorId: req.user.id,
-      stamp: `${date} ${time}:00`,
+      stamp: `${stampDate} ${time}:00`,
       workDate: date,
     });
-    res.flash('ok', `Recorded ${kind} at ${time}.`);
+    res.flash('ok', `Recorded ${kind} at ${time}`
+      + (stampDate !== date ? ` (${stampDate}, the morning after)` : '') + '.');
   } catch (e) {
     res.flash('err', e.message);
   }

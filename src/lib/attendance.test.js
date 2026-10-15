@@ -601,3 +601,63 @@ test('in-progress days do not distort monthly totals', () => {
   assert.equal(t.days, 1);
   assert.equal(t.halfDay, 1);        // counted by its real status, not the label
 });
+
+// --- which calendar day a time sits on -------------------------------------
+
+const { stampDateFor } = require('./attendance');
+
+test('an overnight end time is stamped on the morning after', () => {
+  // The bug this guards: stamping 05:10 on the night's own date put the
+  // check-out BEFORE its check-in, and the night read as never closed.
+  assert.equal(stampDateFor(NIGHT_8, '2026-10-14', '05:10'), '2026-10-15');
+  assert.equal(stampDateFor(NIGHT_8, '2026-10-14', '05:00'), '2026-10-15');
+  assert.equal(stampDateFor(NIGHT_8, '2026-10-14', '00:30'), '2026-10-15');
+});
+
+test('a late finish past the shift end is still the morning after', () => {
+  // 07:00 is beyond the 05:00 end, so a naive "before the end time" rule
+  // misses it and files it on the wrong day.
+  assert.equal(stampDateFor(NIGHT_8, '2026-10-14', '07:00'), '2026-10-15');
+  assert.equal(stampDateFor(NIGHT_8, '2026-10-14', '11:00'), '2026-10-15');
+});
+
+test('an evening start stays on the night own date', () => {
+  assert.equal(stampDateFor(NIGHT_8, '2026-10-14', '19:45'), '2026-10-14');
+  assert.equal(stampDateFor(NIGHT_8, '2026-10-14', '20:05'), '2026-10-14');
+  assert.equal(stampDateFor(NIGHT_8, '2026-10-14', '23:59'), '2026-10-14');
+});
+
+test('it uses the same cut-over as resolveWorkDate, so the two agree', () => {
+  // Whatever stampDateFor decides, feeding that stamp back through
+  // resolveWorkDate must return the business date we started from.
+  for (const t of ['19:45', '20:00', '23:30', '00:30', '05:10', '07:00', '12:29']) {
+    const date = stampDateFor(NIGHT_8, '2026-10-14', t);
+    assert.equal(resolveWorkDate(NIGHT_8, `${date} ${t}:00`), '2026-10-14',
+      `${t} stamped on ${date} should resolve back to the night of 2026-10-14`);
+  }
+});
+
+test('a day shift always stamps on its own date', () => {
+  for (const t of ['09:00', '13:00', '17:30', '23:00']) {
+    assert.equal(stampDateFor(SHIFT, '2026-10-14', t), '2026-10-14');
+  }
+});
+
+test('an employee with no shift stamps on the work date', () => {
+  assert.equal(stampDateFor(null, '2026-10-14', '05:10'), '2026-10-14');
+});
+
+test('an admin-corrected overnight pair evaluates as a full night', () => {
+  const d = evaluateDay({
+    date: '2026-10-14',
+    shift: { ...NIGHT_8, break_minutes: 0, break_after_minutes: 0 },
+    punches: [
+      { punched_at: `2026-10-14 ${'20:05'}:00`, work_date: '2026-10-14', kind: 'in' },
+      { punched_at: `${stampDateFor(NIGHT_8, '2026-10-14', '05:10')} 05:10:00`,
+        work_date: '2026-10-14', kind: 'out' },
+    ],
+  });
+  assert.equal(d.status, 'present');
+  assert.equal(d.workedMinutes, 545);
+  assert.deepEqual(d.problems, []);
+});
