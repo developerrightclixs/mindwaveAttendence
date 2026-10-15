@@ -259,10 +259,6 @@ function evaluateDay({
 
   if (notYetJoined) {
     status = 'not_employed';
-  } else if (exempt && !hasAnyWork && !override) {
-    // Not required to clock in. Silence rather than an accusation: an absence
-    // mark would be wrong, and would drag the whole team's figures with it.
-    status = 'not_required';
   } else if (override) {
     status = override.status;              // HR's word is final
     note = override.note || null;
@@ -274,6 +270,12 @@ function evaluateDay({
     // themselves even for dates still to come - only the absence verdict
     // below has to wait for the day to actually happen.
     status = 'weekly_off';
+  } else if (exempt && !hasAnyWork) {
+    // Not required to clock in. Checked after the calendar facts above: a
+    // weekend is still a weekend for someone who is exempt. Silence rather
+    // than an accusation - an absence mark would be wrong about them, and
+    // would drag the whole team's figures down with it.
+    status = 'not_required';
   } else if (inFuture && !hasAnyWork) {
     status = 'upcoming';
   } else if (!hasAnyWork) {

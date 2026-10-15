@@ -721,3 +721,29 @@ test('HR can still pin a status on an exempt employee', () => {
   assert.equal(d.status, 'leave');
   assert.equal(d.note, 'annual');
 });
+
+test('a weekend is still a weekend for an exempt employee', () => {
+  // Exemption excuses someone from turning up; it does not rewrite the
+  // calendar. SAT is a weekly off for everybody.
+  const d = evaluateDay({
+    date: SAT, shift: SHIFT, punches: [], exempt: true, todayDate: '2026-10-20',
+  });
+  assert.equal(d.status, 'weekly_off');
+  assert.equal(d.isOff, true);
+});
+
+test('a holiday is still a holiday for an exempt employee', () => {
+  const d = evaluateDay({
+    date: DAY, shift: SHIFT, punches: [], exempt: true, todayDate: '2026-10-20',
+    holiday: { work_date: DAY, name: 'Founders Day' },
+  });
+  assert.equal(d.status, 'holiday');
+  assert.equal(d.note, 'Founders Day');
+});
+
+test('an exempt employee is still "not required" on an ordinary working day', () => {
+  const d = evaluateDay({
+    date: DAY, shift: SHIFT, punches: [], exempt: true, todayDate: '2026-10-20',
+  });
+  assert.equal(d.status, 'not_required');
+});

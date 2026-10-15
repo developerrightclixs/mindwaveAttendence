@@ -41,6 +41,10 @@
   --info: #2e6bea;
   --info-soft: #e8f0fe;
   --mute-soft: #f0f1f4;
+  /* Weekly off. A clear red wash, distinct from the alarm red used for a
+     problem - these rows are expected, just not working days. */
+  --off-bg: #fdeaea;
+  --off-bg-hover: #fadddd;
 
   --r-card: 14px;
   --r-ctl: 10px;
@@ -94,6 +98,8 @@
     --info: #6e9bf5;
     --info-soft: #16233d;
     --mute-soft: #22262e;
+    --off-bg: #2e1a1c;
+    --off-bg-hover: #3a2022;
     --shadow-card: 0 1px 2px rgba(0, 0, 0, .4);
   }
 }
@@ -128,6 +134,8 @@
   --info: #6e9bf5;
   --info-soft: #16233d;
   --mute-soft: #22262e;
+  --off-bg: #2e1a1c;
+  --off-bg-hover: #3a2022;
   --shadow-card: 0 1px 2px rgba(0, 0, 0, .4);
 }
 
@@ -515,7 +523,10 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
 td.dim, .dim { color: var(--text-faint); }
 .nowrap { white-space: nowrap; }
 
-tr.is-off td { background: var(--surface-2); }
+tr.is-off td { background: var(--off-bg); }
+/* After the generic row hover, or that would win and the day would lose
+   its colour exactly when someone points at it. */
+tbody tr.is-off:hover td { background: var(--off-bg-hover); }
 tr.is-today td { box-shadow: inset 2px 0 0 var(--brand); }
 
 .person { display: flex; align-items: center; gap: 10px; }
@@ -589,7 +600,7 @@ tr.is-today td { box-shadow: inset 2px 0 0 var(--brand); }
 .pill.absent       { background: var(--bad-soft);   color: var(--bad); }
 .pill.leave        { background: var(--blue-soft);  color: var(--blue); }
 .pill.holiday      { background: var(--blue-soft);  color: var(--blue); }
-.pill.weekly_off   { background: var(--mute-soft);  color: var(--text-dim); }
+.pill.weekly_off   { background: var(--bad-soft);  color: var(--bad); }
 .pill.not_employed { background: var(--mute-soft);  color: var(--text-faint); }
 .pill.upcoming     { background: var(--mute-soft);  color: var(--text-faint); }
 .pill.not_required { background: var(--mute-soft);  color: var(--text-faint); }
