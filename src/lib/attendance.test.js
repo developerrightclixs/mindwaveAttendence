@@ -661,3 +661,63 @@ test('an admin-corrected overnight pair evaluates as a full night', () => {
   assert.equal(d.workedMinutes, 545);
   assert.deepEqual(d.problems, []);
 });
+
+// --- staff not required to clock in ----------------------------------------
+
+test('an exempt employee with no punches is not marked absent', () => {
+  const d = evaluateDay({
+    date: DAY, shift: SHIFT, punches: [], exempt: true, todayDate: '2026-10-20',
+  });
+  assert.equal(d.status, 'not_required');
+  assert.equal(d.statusLabel, 'Not required');
+  assert.equal(d.dayCredit, 0);
+  assert.equal(d.expectedMinutes, 0);
+});
+
+test('an exempt employee is never late, however late they arrive', () => {
+  const d = evaluateDay({
+    date: DAY, shift: SHIFT, exempt: true,
+    punches: [p('11:30', 'in'), p('18:00', 'out')],
+  });
+  assert.equal(d.lateMinutes, 0);
+  assert.equal(d.status, 'present');
+});
+
+test('an exempt employee keeps the hours they do record', () => {
+  const d = evaluateDay({
+    date: DAY, shift: SHIFT, exempt: true,
+    punches: [p('09:00', 'in'), p('18:00', 'out')],
+  });
+  assert.equal(d.workedMinutes, 480);
+  assert.equal(d.status, 'present');
+});
+
+test('a short day for an exempt employee is not a half day or an early exit', () => {
+  const d = evaluateDay({
+    date: DAY, shift: SHIFT, exempt: true,
+    punches: [p('09:00', 'in'), p('11:00', 'out')],
+  });
+  assert.equal(d.status, 'present');
+  assert.equal(d.earlyMinutes, 0);
+  assert.equal(d.workedMinutes, 120);
+});
+
+test('exempt days are left out of the monthly figures entirely', () => {
+  const t = summarise([
+    evaluateDay({ date: DAY, shift: SHIFT, punches: [], exempt: true, todayDate: '2026-10-20' }),
+    evaluateDay({ date: DAY, shift: SHIFT, punches: [p('09:00', 'in'), p('18:00', 'out')] }),
+  ]);
+  assert.equal(t.days, 1);          // only the tracked day counts
+  assert.equal(t.absent, 0);
+  assert.equal(t.present, 1);
+});
+
+test('HR can still pin a status on an exempt employee', () => {
+  // Exemption must not block a deliberate decision, such as recording leave.
+  const d = evaluateDay({
+    date: DAY, shift: SHIFT, punches: [], exempt: true,
+    override: { status: 'leave', note: 'annual' }, todayDate: '2026-10-20',
+  });
+  assert.equal(d.status, 'leave');
+  assert.equal(d.note, 'annual');
+});

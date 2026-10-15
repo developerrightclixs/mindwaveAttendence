@@ -42,6 +42,17 @@
                         <%= !emp || emp.active ? 'checked' : '' %>> Active</label>
           <p class="hint">Inactive staff keep their history but cannot check in or sign in.</p>
         </div>
+
+        <div class="field">
+          <label><input type="checkbox" name="attendance_exempt" value="1"
+                        <%= emp && emp.attendance_exempt ? 'checked' : '' %>>
+            Not required to clock in or out</label>
+          <p class="hint">
+            For senior staff. They are never marked late or absent and never
+            appear in the exceptions list, so their figures do not distort the
+            team's. Any time they do record is still kept.
+          </p>
+        </div>
       </fieldset>
 
       <fieldset>

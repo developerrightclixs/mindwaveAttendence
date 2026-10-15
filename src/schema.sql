@@ -56,6 +56,10 @@ CREATE TABLE IF NOT EXISTS employees (
   joined_on      TEXT    NOT NULL,
   -- Inactive staff keep their history but cannot punch or log in.
   active         INTEGER NOT NULL DEFAULT 1,
+  -- Senior staff who are not required to clock in or out. They are never
+  -- marked absent or late, and never appear in the exceptions list - but any
+  -- punch they do make is still recorded and counted.
+  attendance_exempt INTEGER NOT NULL DEFAULT 0,
   created_at     TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_employees_dept   ON employees(department_id);

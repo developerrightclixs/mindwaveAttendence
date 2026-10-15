@@ -38,6 +38,7 @@
                   <div>
                     <div class="nm"><%= e.name %>
                       <% if (!e.active) { %><span class="badge-role">inactive</span><% } %>
+                      <% if (e.attendance_exempt) { %><span class="badge-role" title="Not required to clock in or out">exempt</span><% } %>
                     </div>
                     <div class="id"><%= e.emp_code %></div>
                   </div>

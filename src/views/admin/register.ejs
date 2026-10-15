@@ -110,6 +110,9 @@
                   <div>
                     <div class="nm"><%= r.employee.name %></div>
                     <div class="id"><%= r.employee.emp_code %><%= r.employee.department_name ? ' · ' + r.employee.department_name : '' %></div>
+                    <% if (r.employee.attendance_exempt) { %>
+                      <span class="badge-role" title="Not required to clock in or out">exempt</span>
+                    <% } %>
                   </div>
                 </div>
               </a>

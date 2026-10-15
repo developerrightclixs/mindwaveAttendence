@@ -127,6 +127,7 @@ async function tx(fn) {
 // Columns added after the first release. Applied on every boot; ADD COLUMN
 // IF NOT EXISTS makes that a no-op once present.
 const COLUMN_MIGRATIONS = [
+  ['employees', 'attendance_exempt', 'INTEGER NOT NULL DEFAULT 0'],
   ['day_overrides', 'leave_type',
     "TEXT CHECK (leave_type IS NULL OR leave_type IN ('sick','casual'))"],
 ];

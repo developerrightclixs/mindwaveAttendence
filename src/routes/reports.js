@@ -133,6 +133,8 @@ router.get('/exceptions', async (req, res) => {
     for (const d of r.days) {
       // Today is still in progress; an open check-in is not yet a problem.
       if (d.date >= today) continue;
+      // Someone not required to clock in cannot be an exception for not doing so.
+      if (e.attendance_exempt) continue;
       if (d.problems.length) {
         items.push({ employee: e, day: d, kind: 'data', detail: d.problems.join('; ') });
       } else if (d.status === 'absent' && !d.isOff) {

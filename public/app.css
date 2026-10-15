@@ -592,6 +592,7 @@ tr.is-today td { box-shadow: inset 2px 0 0 var(--brand); }
 .pill.weekly_off   { background: var(--mute-soft);  color: var(--text-dim); }
 .pill.not_employed { background: var(--mute-soft);  color: var(--text-faint); }
 .pill.upcoming     { background: var(--mute-soft);  color: var(--text-faint); }
+.pill.not_required { background: var(--mute-soft);  color: var(--text-faint); }
 .pill.in_progress  { background: var(--brand-soft); color: var(--brand); }
 .pill.live         { background: var(--brand-soft); color: var(--brand); }
 

@@ -22,7 +22,7 @@ const { isoStamp, dateRange, addDays, monthBounds, isoWeekday } = require('./dat
 
 const employeeCols = `
   e.id, e.emp_code, e.name, e.email, e.role, e.department_id, e.shift_id,
-  e.manager_id, e.joined_on, e.active,
+  e.manager_id, e.joined_on, e.active, e.attendance_exempt,
   d.name AS department_name,
   s.name AS shift_name`;
 
@@ -250,7 +250,8 @@ async function setOverride({ employeeId, workDate, status, note, actorId,
 /** Evaluated days for one employee over an inclusive date range. */
 async function employeeDays(employeeId, from, to) {
   const emp = await one(
-    'SELECT id, shift_id, joined_on FROM employees WHERE id = ?', employeeId);
+    'SELECT id, shift_id, joined_on, attendance_exempt FROM employees WHERE id = ?',
+    employeeId);
   if (!emp) return null;
 
   const shift = emp.shift_id ? await getShift(emp.shift_id) : null;
@@ -284,6 +285,7 @@ async function employeeDays(employeeId, from, to) {
     holiday: hol.get(date) || null,
     nowStamp: date === liveDate ? stamp : null,
     joinedOn: emp.joined_on,
+    exempt: !!emp.attendance_exempt,
   }));
 
   return { employee: await getEmployee(employeeId), days, totals: summarise(days) };
@@ -322,6 +324,7 @@ async function dayRegister(date, { includeInactive = false, departmentId = null 
       holiday: hol.get(date) || null,
       nowStamp: live,
       joinedOn: e.joined_on,
+      exempt: !!e.attendance_exempt,
     });
     return { employee: e, ...day };
   });
@@ -371,6 +374,7 @@ async function navCounts() {
   // Only days that have finished can be exceptions.
   let exceptions = 0;
   for (const e of await listEmployees()) {
+    if (e.attendance_exempt) continue;
     const r = await employeeDays(e.id, from, to);
     for (const d of r.days) {
       if (d.date >= today) continue;
@@ -604,7 +608,8 @@ async function selfEntryNights(employeeId) {
   if (!data) return { window: w, nights: [] };
 
   const nights = data.days
-    .filter((d) => !['not_employed', 'upcoming', 'weekly_off', 'holiday'].includes(d.status))
+    .filter((d) => !['not_employed', 'upcoming', 'weekly_off', 'holiday',
+      'not_required'].includes(d.status))
     .filter((d) => d.date <= w.to)
     .filter((d) => !d.firstIn || !d.lastOut || d.problems.length)
     .reverse();

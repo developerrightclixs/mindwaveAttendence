@@ -219,6 +219,7 @@ function employeeFormValues(body) {
     manager_id: body.manager_id ? asInt(body.manager_id) : null,
     joined_on: /^\d{4}-\d{2}-\d{2}$/.test(body.joined_on || '') ? body.joined_on : isoDate(),
     active: body.active ? 1 : 0,
+    attendance_exempt: body.attendance_exempt ? 1 : 0,
   };
 }
 
@@ -300,10 +301,10 @@ router.post('/employees/:id', adminOnly, async (req, res) => {
       `UPDATE employees SET
          emp_code = ?, name = ?, email = ?, role = ?,
          department_id = ?, shift_id = ?,
-         manager_id = ?, joined_on = ?, active = ?
+         manager_id = ?, joined_on = ?, active = ?, attendance_exempt = ?
        WHERE id = ?`,
       v.emp_code, v.name, v.email, v.role, v.department_id, v.shift_id,
-      v.manager_id, v.joined_on, v.active, id);
+      v.manager_id, v.joined_on, v.active, v.attendance_exempt, id);
 
     if (req.body.password) {
       if (String(req.body.password).length < 8) {

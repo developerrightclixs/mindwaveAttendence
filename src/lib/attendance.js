@@ -28,6 +28,7 @@ const STATUS_LABELS = {
   weekly_off: 'Weekly off',
   not_employed: 'N/A',
   upcoming: 'Upcoming',
+  not_required: 'Not required',
 };
 
 /** Weekly-off days of a shift as a Set of ISO weekdays (1=Mon..7=Sun). */
@@ -185,10 +186,11 @@ function buildSessions(punches, nowStamp) {
  * @param {string} [o.nowStamp]   "YYYY-MM-DD HH:MM:SS" for open-session maths
  * @param {string} [o.joinedOn]   employee joined_on; earlier dates are N/A
  * @param {string} [o.todayDate]  "today" for future detection; defaults to now
+ * @param {boolean} [o.exempt]    senior staff not required to clock in or out
  */
 function evaluateDay({
   date, shift, punches = [], override = null, holiday = null,
-  nowStamp = null, joinedOn = null, todayDate = null,
+  nowStamp = null, joinedOn = null, todayDate = null, exempt = false,
 }) {
   const sh = { ...DEFAULT_SHIFT, ...(shift || {}) };
   const { start, end } = shiftWindow(sh);
@@ -257,6 +259,10 @@ function evaluateDay({
 
   if (notYetJoined) {
     status = 'not_employed';
+  } else if (exempt && !hasAnyWork && !override) {
+    // Not required to clock in. Silence rather than an accusation: an absence
+    // mark would be wrong, and would drag the whole team's figures with it.
+    status = 'not_required';
   } else if (override) {
     status = override.status;              // HR's word is final
     note = override.note || null;
@@ -291,6 +297,17 @@ function evaluateDay({
     if (!override) overtimeMinutes = worked;
   }
 
+  // An exempt employee keeps whatever hours they recorded, but is never judged
+  // against the clock - no lateness, no early exit, and a short day is not a
+  // half day. Their time is tracked, not policed.
+  if (exempt) {
+    lateMinutes = 0;
+    earlyMinutes = 0;
+    if (['late', 'half_day', 'absent'].includes(status)) {
+      status = hasAnyWork ? 'present' : 'not_required';
+    }
+  }
+
   const countsPresent = ['present', 'late', 'half_day'].includes(status);
 
   // A shift still running has not earned its verdict yet: at 22:00 on a
@@ -313,7 +330,7 @@ function evaluateDay({
     grossMinutes: gross,
     breakMinutes: breakCharged,
     expectedMinutes: isOff || status === 'holiday' || status === 'upcoming'
-      || status === 'not_employed'
+      || status === 'not_employed' || status === 'not_required' || exempt
       ? 0 : expectedMinutes(sh),
     lateMinutes,
     earlyMinutes,
@@ -337,7 +354,9 @@ function summarise(days) {
     payableDays: 0, problemDays: 0,
   };
   for (const d of days) {
-    if (d.status === 'not_employed' || d.status === 'upcoming') continue;
+    // Exempt days are not attendance facts, so they do not belong in a count
+    // of who turned up.
+    if (['not_employed', 'upcoming', 'not_required'].includes(d.status)) continue;
     t.days++;
     if (d.status === 'present') t.present++;
     else if (d.status === 'late') { t.late++; t.present++; }
