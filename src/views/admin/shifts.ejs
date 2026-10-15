@@ -1,0 +1,65 @@
+<%- include('../partials/head') %>
+
+<%
+  var DAYS = [[1,'Mon'],[2,'Tue'],[3,'Wed'],[4,'Thu'],[5,'Fri'],[6,'Sat'],[7,'Sun']];
+  function offSet(s) { return String(s.weekly_off || '').split(',').map(Number); }
+%>
+
+<div class="page-head">
+  <div>
+    <h1>Shifts</h1>
+    <p class="sub">The rules that decide late, half-day and overtime. Changing a shift
+      recalculates every past day for the staff on it.</p>
+  </div>
+</div>
+
+<% shifts.forEach(function (s) { %>
+  <div class="card">
+    <div class="card-head">
+      <h2><%= s.name %>
+        <span class="dim" style="font-weight:400">
+          <%= s.start_time %>–<%= s.end_time %>
+          <% if (s.end_time <= s.start_time) { %> (overnight)<% } %>
+          &middot; <%= s.headcount %> staff
+        </span>
+      </h2>
+      <% if (isAdmin && !s.headcount) { %>
+        <form method="post" action="/admin/shifts/<%= s.id %>/delete"
+              onsubmit="return confirm('Delete the shift <%= s.name %>?')">
+          <input type="hidden" name="_csrf" value="<%= csrf %>">
+          <button class="btn small danger" type="submit">Delete</button>
+        </form>
+      <% } %>
+    </div>
+
+    <div class="card-body">
+      <% if (!isAdmin) { %>
+        <p class="sub">Starts <%= s.start_time %>, ends <%= s.end_time %>,
+          <%= s.grace_minutes %> min grace, <%= s.break_minutes %> min unpaid break,
+          overtime past <%= fmt.formatDuration(s.overtime_after_minutes) %>.</p>
+      <% } else { %>
+        <%- include('_shift-fields', { s: s, DAYS: DAYS, offs: offSet(s), csrf: csrf }) %>
+      <% } %>
+    </div>
+  </div>
+<% }); %>
+
+<% if (isAdmin) { %>
+  <div class="card">
+    <div class="card-head"><h2>Add a shift</h2></div>
+    <div class="card-body">
+      <%- include('_shift-fields', {
+            s: {
+              id: '', name: '', start_time: '09:00', end_time: '18:00',
+              grace_minutes: 10, break_minutes: 60, break_after_minutes: 360,
+              half_day_minutes: 240, min_present_minutes: 60,
+              overtime_after_minutes: 480, overtime_grace_minutes: 15,
+              weekly_off: '6,7'
+            },
+            DAYS: DAYS, offs: [6, 7], csrf: csrf
+          }) %>
+    </div>
+  </div>
+<% } %>
+
+<%- include('../partials/foot') %>

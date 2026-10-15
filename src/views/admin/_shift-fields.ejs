@@ -1,0 +1,86 @@
+<form method="post" action="/admin/shifts">
+  <input type="hidden" name="_csrf" value="<%= csrf %>">
+  <% if (s.id) { %><input type="hidden" name="id" value="<%= s.id %>"><% } %>
+
+  <div class="field-row">
+    <div class="field">
+      <label>Shift name *</label>
+      <input type="text" name="name" required value="<%= s.name %>">
+    </div>
+    <div class="field">
+      <label>Starts</label>
+      <input type="time" name="start_time" value="<%= s.start_time %>" required>
+    </div>
+    <div class="field">
+      <label>Ends</label>
+      <input type="time" name="end_time" value="<%= s.end_time %>" required>
+      <p class="hint">An end at or before the start means an overnight shift.</p>
+    </div>
+  </div>
+
+  <div class="field">
+    <label>Weekly off</label>
+    <div class="checks">
+      <% DAYS.forEach(function (d) { %>
+        <label>
+          <input type="checkbox" name="weekly_off" value="<%= d[0] %>"
+                 <%= offs.indexOf(d[0]) >= 0 ? 'checked' : '' %>>
+          <%= d[1] %>
+        </label>
+      <% }); %>
+    </div>
+  </div>
+
+  <div class="field-row">
+    <div class="field">
+      <label>Late grace (min)</label>
+      <input type="number" name="grace_minutes" min="0" max="240"
+             value="<%= s.grace_minutes %>">
+      <p class="hint">Arriving within this is not late. Past it, lateness counts
+        from the shift start.</p>
+    </div>
+    <div class="field">
+      <label>Unpaid break (min)</label>
+      <input type="number" name="break_minutes" min="0" max="480"
+             value="<%= s.break_minutes %>">
+      <p class="hint">Deducted only if they did not already clock out for it.</p>
+    </div>
+    <div class="field">
+      <label>Break applies after (min)</label>
+      <input type="number" name="break_after_minutes" min="0" max="960"
+             value="<%= s.break_after_minutes %>">
+      <p class="hint">Shorter days are charged no break at all.</p>
+    </div>
+  </div>
+
+  <div class="field-row">
+    <div class="field">
+      <label>Half day under (min)</label>
+      <input type="number" name="half_day_minutes" min="0" max="960"
+             value="<%= s.half_day_minutes %>">
+      <p class="hint">Counts as half a payable day.</p>
+    </div>
+    <div class="field">
+      <label>Absent under (min)</label>
+      <input type="number" name="min_present_minutes" min="0" max="480"
+             value="<%= s.min_present_minutes %>">
+      <p class="hint">Too short to count as attendance at all.</p>
+    </div>
+    <div class="field">
+      <label>Overtime after (min)</label>
+      <input type="number" name="overtime_after_minutes" min="0" max="960"
+             value="<%= s.overtime_after_minutes %>">
+      <p class="hint">Worked minutes beyond this are overtime.</p>
+    </div>
+    <div class="field">
+      <label>Overtime grace (min)</label>
+      <input type="number" name="overtime_grace_minutes" min="0" max="240"
+             value="<%= s.overtime_grace_minutes %>">
+      <p class="hint">Overruns shorter than this are ignored.</p>
+    </div>
+  </div>
+
+  <button class="btn primary" type="submit">
+    <%= s.id ? 'Save shift' : 'Create shift' %>
+  </button>
+</form>

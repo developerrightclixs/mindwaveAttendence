@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Attendance kiosk</title>
+  <link rel="preload" href="/fonts/urbanist-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/afacad-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/fonts/fonts.css?v=<%= assetV %>">
+  <link rel="stylesheet" href="/app.css?v=<%= assetV %>">
+  <script>
+    /* Applied before first paint so an explicit theme choice does not flash. */
+    (function () {
+      try {
+        var t = localStorage.getItem('mw-theme');
+        if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage blocked: fall back to the system theme */ }
+    }());
+  </script>
+</head>
+<body>
+<div class="centered">
+  <div class="panel kiosk-panel">
+
+    <% if (result) { %>
+      <div class="kiosk-result">
+        <span class="pill <%= result.kind === 'in' ? 'present' : 'half_day' %>">
+          <%= result.kind === 'in' ? 'Checked in' : 'Checked out' %>
+        </span>
+        <div class="big"><%= result.time %></div>
+        <div class="who-name"><%= result.name %></div>
+
+        <% if (result.kind === 'out') { %>
+          <p class="sub">Worked today: <strong><%= fmt.formatDuration(result.worked) %></strong></p>
+        <% } else if (result.late > 0) { %>
+          <p class="warn-text"><%= fmt.formatDuration(result.late) %> after your shift start.</p>
+        <% } %>
+
+        <div style="margin-top:22px">
+          <a class="btn primary big" href="/kiosk">Next person</a>
+        </div>
+      </div>
+
+      <!-- Clear the screen so the next person does not see someone else's name. -->
+      <script>setTimeout(function () { location.href = '/kiosk'; }, 6000);</script>
+
+    <% } else { %>
+      <div class="brand-mark">M</div>
+      <h1>Attendance</h1>
+      <p class="kiosk-clock"><%= date %></p>
+
+      <% if (error) { %><div class="flash err"><%= error %></div><% } %>
+
+      <form method="post" action="/kiosk" autocomplete="off">
+        <input type="hidden" name="_csrf" value="<%= csrf %>">
+
+        <div class="field">
+          <label for="emp_code">Employee code</label>
+          <input id="emp_code" name="emp_code" type="text" required autofocus
+                 autocapitalize="characters" spellcheck="false">
+        </div>
+
+        <div class="field">
+          <label for="pin">PIN</label>
+          <input id="pin" name="pin" type="password" inputmode="numeric"
+                 pattern="[0-9]*" required>
+        </div>
+
+        <button class="btn primary big" type="submit">Check in / out</button>
+      </form>
+
+      <p class="sub" style="margin-top:18px">
+        The system records whichever is next for you.
+      </p>
+    <% } %>
+
+  </div>
+</div>
+<script src="/theme.js?v=<%= assetV %>"></script>
+</body>
+</html>

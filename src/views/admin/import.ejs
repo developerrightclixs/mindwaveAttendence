@@ -1,0 +1,236 @@
+<%- include('../partials/head') %>
+
+<div class="page-head">
+  <div>
+    <h1>Import employees</h1>
+    <p class="sub">Paste your staff list from Excel or a CSV file.
+      Nothing is saved until you confirm the preview.</p>
+  </div>
+  <a class="btn" href="/admin/employees">Back to employees</a>
+</div>
+
+<!-- Result of a completed import ------------------------------------------- -->
+<% if (created && created.length) { %>
+  <div class="card">
+    <div class="card-head">
+      <h2><%= created.length %> employee<%= created.length === 1 ? '' : 's' %> imported</h2>
+      <button class="btn small no-print" type="button" onclick="window.print()">Print this list</button>
+    </div>
+    <div class="card-body">
+      <p class="sub" style="margin-bottom:12px">
+        <strong>Save or print this now.</strong> Generated PINs and passwords are
+        shown once and are not recoverable afterwards &mdash; they are stored hashed.
+        Reset any of them later from the employee's edit page.
+      </p>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Code</th><th>Name</th><th>Email</th><th>Kiosk PIN</th><th>Password</th></tr>
+        </thead>
+        <tbody>
+          <% created.forEach(function (c) { %>
+            <tr>
+              <td class="time"><%= c.emp_code %></td>
+              <td><strong><%= c.name %></strong></td>
+              <td class="dim"><%= c.email || 'kiosk only' %></td>
+              <td class="time"><%= c.pinGenerated ? c.pin : 'as supplied' %></td>
+              <td class="time"><%= c.password || '—' %></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="btn-row" style="margin-bottom:22px">
+    <a class="btn primary" href="/admin/employees">See all employees</a>
+    <a class="btn" href="/admin/import">Import more</a>
+  </div>
+<% } %>
+
+<!-- Preview ---------------------------------------------------------------- -->
+<% if (result) { %>
+  <% if (result.fatal) { %>
+    <div class="flash err"><%= result.fatal %></div>
+  <% } else { %>
+
+    <% if (typeof lateFailure !== 'undefined' && lateFailure) { %>
+      <div class="flash err"><%= lateFailure %></div>
+    <% } %>
+
+    <div class="stats" style="margin-bottom:18px">
+      <div class="stat good"><div class="n"><%= result.valid.length %></div>
+        <div class="k">Ready to import</div></div>
+      <div class="stat <%= result.bad.length ? 'bad' : '' %>">
+        <div class="n"><%= result.bad.length %></div>
+        <div class="k">Need fixing</div></div>
+      <div class="stat info"><div class="n"><%= result.newDepartments.length %></div>
+        <div class="k">New departments</div></div>
+    </div>
+
+    <% if (result.unknownHeaders.length) { %>
+      <div class="flash err">
+        These columns were not recognised and will be ignored:
+        <strong><%= result.unknownHeaders.join(', ') %></strong>.
+      </div>
+    <% } %>
+
+    <% if (result.newDepartments.length) { %>
+      <div class="card"><div class="card-body">
+        <p style="margin:0">These departments do not exist yet and will be created:
+          <strong><%= result.newDepartments.join(', ') %></strong></p>
+      </div></div>
+    <% } %>
+
+    <% if (result.bad.length) { %>
+      <div class="card">
+        <div class="card-head"><h2>Rows that need fixing</h2></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Line</th><th>Name</th><th>Problem</th></tr></thead>
+            <tbody>
+              <% result.bad.forEach(function (b) { %>
+                <tr>
+                  <td class="num"><%= b.line %></td>
+                  <td><%= b.name || '(no name)' %></td>
+                  <td class="bad-text"><%= b.errors.join('; ') %></td>
+                </tr>
+              <% }); %>
+            </tbody>
+          </table>
+        </div>
+        <div class="card-body" style="border-top:1px solid var(--border)">
+          <p class="sub" style="margin:0">Fix these in the box below, or remove
+            those lines to import only the rest.</p>
+        </div>
+      </div>
+    <% } %>
+
+    <% if (result.valid.length) { %>
+      <div class="card">
+        <div class="card-head">
+          <h2>Ready to import</h2>
+          <span class="dim">Check this before confirming</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Code</th><th>Name</th><th>Email</th><th>Department</th>
+                <th>Shift</th><th>Role</th><th>Joined</th><th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% result.valid.forEach(function (v) { %>
+                <tr>
+                  <td class="time"><%= v.emp_code %></td>
+                  <td><strong><%= v.name %></strong></td>
+                  <td class="dim"><%= v.email || 'kiosk only' %></td>
+                  <td class="dim"><%= v.departmentName || '—' %></td>
+                  <td class="dim"><%= v.shiftName || 'defaults' %></td>
+                  <td><span class="badge-role <%= v.role %>"><%= v.role %></span></td>
+                  <td class="dim nowrap"><%= v.joined_on %></td>
+                  <td class="dim" style="font-size:12px"><%= v.notes.join('; ') %></td>
+                </tr>
+              <% }); %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <form method="post" action="/admin/import/commit" style="margin-bottom:22px">
+        <input type="hidden" name="_csrf" value="<%= csrf %>">
+        <input type="hidden" name="csv" value="<%= text %>">
+        <input type="hidden" name="default_shift_id" value="<%= defaultShiftId %>">
+        <div class="btn-row">
+          <button class="btn primary big" type="submit"
+                  <%= result.bad.length ? 'disabled' : '' %>>
+            Import <%= result.valid.length %> employee<%= result.valid.length === 1 ? '' : 's' %>
+          </button>
+          <% if (result.bad.length) { %>
+            <span class="bad-text">Fix the <%= result.bad.length %> problem row(s) first.</span>
+          <% } %>
+        </div>
+      </form>
+    <% } %>
+  <% } %>
+<% } %>
+
+<!-- Paste box -------------------------------------------------------------- -->
+<div class="card">
+  <div class="card-head"><h2><%= result ? 'Edit and preview again' : 'Paste your staff list' %></h2></div>
+  <div class="card-body">
+    <form method="post" action="/admin/import/preview">
+      <input type="hidden" name="_csrf" value="<%= csrf %>">
+
+      <div class="field">
+        <label for="csv">Rows</label>
+        <textarea id="csv" name="csv" rows="12" spellcheck="false"
+                  style="font-family:var(--mono); font-size:12.5px"
+                  placeholder="code,name,email,department,shift,role,joined_on&#10;MW011,Nadia Qureshi,nadia@yourcompany.com,Engineering,General (09:00-18:00),employee,2026-01-15&#10;MW012,Rashid Mehmood,,Operations,Night (22:00-06:00),employee,2026-02-01"><%= text %></textarea>
+        <p class="hint">The first row must be the header row. Copying straight
+          out of Excel works &mdash; tabs, commas and semicolons are all accepted.</p>
+      </div>
+
+      <div class="field" style="max-width:340px">
+        <label for="default_shift_id">Shift for rows that do not name one</label>
+        <select id="default_shift_id" name="default_shift_id">
+          <option value="">— leave unassigned (09:00–18:00 defaults) —</option>
+          <% shifts.forEach(function (s) { %>
+            <option value="<%= s.id %>"
+              <%= String(defaultShiftId) === String(s.id) ? 'selected' : '' %>>
+              <%= s.name %>
+            </option>
+          <% }); %>
+        </select>
+      </div>
+
+      <button class="btn primary" type="submit">Preview import</button>
+    </form>
+  </div>
+</div>
+
+<!-- Help ------------------------------------------------------------------- -->
+<div class="card">
+  <div class="card-head"><h2>Which columns can I use?</h2></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Column</th><th>Required</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td class="time">name</td><td><strong>Yes</strong></td>
+            <td>Full name. The only column that must be present.</td></tr>
+        <tr><td class="time">code</td><td>No</td>
+            <td>Badge or payroll ID. Generated from their initials if blank.</td></tr>
+        <tr><td class="time">email</td><td>No</td>
+            <td>Only for staff who sign in from a browser. Leave blank for
+                kiosk-only staff.</td></tr>
+        <tr><td class="time">password</td><td>No</td>
+            <td>Generated and shown once if an email is given without one.
+                Minimum 8 characters.</td></tr>
+        <tr><td class="time">pin</td><td>No</td>
+            <td>4–8 digits for the kiosk. Generated if blank.</td></tr>
+        <tr><td class="time">department</td><td>No</td>
+            <td>Created automatically if it does not exist yet.</td></tr>
+        <tr><td class="time">shift</td><td>No</td>
+            <td>Must match an existing shift name exactly. Decides the
+                late and overtime rules.</td></tr>
+        <tr><td class="time">role</td><td>No</td>
+            <td><code>employee</code> (default), <code>manager</code> or
+                <code>admin</code>. Anything but employee needs an email.</td></tr>
+        <tr><td class="time">manager</td><td>No</td>
+            <td>The manager's employee code. May appear in the same file.</td></tr>
+        <tr><td class="time">joined_on</td><td>No</td>
+            <td>YYYY-MM-DD or DD/MM/YYYY. Days before it are never counted
+                absent. Defaults to today.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="card-body" style="border-top:1px solid var(--border)">
+    <p class="sub" style="margin:0">Header spellings are flexible &mdash;
+      <code>Employee Code</code>, <code>emp_code</code>, <code>Badge No</code> and
+      <code>ID</code> all mean the same thing, as do <code>Full Name</code> and
+      <code>name</code>, or <code>DOJ</code> and <code>joined_on</code>.</p>
+  </div>
+</div>
+
+<%- include('../partials/foot') %>

@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title><%= title %> &middot; Mindwave Attendance</title>
+  <link rel="preload" href="/fonts/urbanist-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/afacad-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/fonts/fonts.css?v=<%= assetV %>">
+  <link rel="stylesheet" href="/app.css?v=<%= assetV %>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23ffd233'/><text x='16' y='23' font-size='18' font-family='system-ui' font-weight='bold' text-anchor='middle' fill='%2317191f'>M</text></svg>">
+  <script>
+    /* Applied before first paint so an explicit theme choice does not flash. */
+    (function () {
+      try {
+        var t = localStorage.getItem('mw-theme');
+        if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage blocked: fall back to the system theme */ }
+    }());
+  </script>
+</head>
+<body>
+<% if (user) {
+     const staff = user.role !== 'employee';
+     const nav = typeof navCounts !== 'undefined' && navCounts ? navCounts : {};
+%>
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="/">
+      <span class="brand-mark">M</span>
+      Mindwave
+      <span class="brand-sub">Attendance</span>
+    </a>
+
+    <nav class="main">
+      <a href="/" class="<%= path === '/' ? 'on' : '' %>">My attendance</a>
+      <% if (staff) { %>
+        <a href="/admin" class="<%= path === '/admin' ? 'on' : '' %>">Overview</a>
+        <a href="/admin/register" class="<%= path.startsWith('/admin/register') ? 'on' : '' %>">
+          Register
+          <% if (nav.onPremise) { %><span class="count ok"><%= nav.onPremise %></span><% } %>
+        </a>
+        <a href="/reports/monthly" class="<%= path.startsWith('/reports/monthly') ? 'on' : '' %>">Reports</a>
+        <a href="/reports/exceptions" class="<%= path.startsWith('/reports/exceptions') ? 'on' : '' %>">
+          Exceptions
+          <% if (nav.exceptions) { %><span class="count bad"><%= nav.exceptions %></span><% } %>
+        </a>
+        <a href="/admin/employees" class="<%= path.startsWith('/admin/employees') || path.startsWith('/admin/import') ? 'on' : '' %>">
+          Employees
+          <% if (nav.headcount) { %><span class="count"><%= nav.headcount %></span><% } %>
+        </a>
+      <% } %>
+      <% if (user.role === 'admin') { %>
+        <a href="/admin/shifts" class="<%= path.startsWith('/admin/shifts') ? 'on' : '' %>">Shifts</a>
+      <% } %>
+    </nav>
+
+    <div class="top-right">
+      <span class="top-user"><b><%= user.name %></b></span>
+      <button class="icon-btn" id="theme-toggle" type="button" title="Theme">
+        <span data-mode="auto"><%- icon('contrast', 16) %></span>
+        <span data-mode="light" hidden><%- icon('sun', 16) %></span>
+        <span data-mode="dark" hidden><%- icon('moon', 16) %></span>
+      </button>
+      <a class="icon-btn" href="/password" title="Change password"><%- icon('settings', 16) %></a>
+      <form method="post" action="/logout" class="inline-form">
+        <input type="hidden" name="_csrf" value="<%= csrf %>">
+        <button class="icon-btn" type="submit" title="Sign out"><%- icon('logout', 16) %></button>
+      </form>
+      <% if (user.role === 'admin') { %>
+        <a class="icon-btn accent" href="/admin/employees/new" title="Add employee"><%- icon('plus', 16) %></a>
+      <% } %>
+    </div>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="rail">
+    <%- avatar(user.name, user.emp_code) %>
+    <a href="/" data-label="My attendance" class="<%= path === '/' ? 'on' : '' %>"><%- icon('clock', 19) %></a>
+    <% if (staff) { %>
+      <a href="/admin" data-label="Overview" class="<%= path === '/admin' ? 'on' : '' %>"><%- icon('grid', 19) %></a>
+      <a href="/admin/register" data-label="Daily register" class="<%= path.startsWith('/admin/register') ? 'on' : '' %>"><%- icon('calendar', 19) %></a>
+      <a href="/reports/monthly" data-label="Reports" class="<%= path.startsWith('/reports/monthly') ? 'on' : '' %>"><%- icon('chart', 19) %></a>
+      <a href="/reports/exceptions" data-label="Exceptions" class="<%= path.startsWith('/reports/exceptions') ? 'on' : '' %>"><%- icon('alert', 19) %></a>
+      <a href="/admin/employees" data-label="Employees" class="<%= path.startsWith('/admin/employees') || path.startsWith('/admin/import') ? 'on' : '' %>"><%- icon('users', 19) %></a>
+    <% } %>
+    <% if (user.role === 'admin') { %>
+      <a href="/admin/shifts" data-label="Shifts" class="<%= path.startsWith('/admin/shifts') ? 'on' : '' %>"><%- icon('moon', 19) %></a>
+      <a href="/admin/settings" data-label="Setup" class="<%= path.startsWith('/admin/settings') ? 'on' : '' %>"><%- icon('settings', 19) %></a>
+      <a href="/admin/audit" data-label="Audit trail" class="<%= path.startsWith('/admin/audit') ? 'on' : '' %>"><%- icon('shield', 19) %></a>
+    <% } %>
+  </aside>
+
+  <div class="content">
+<% } else { %>
+  <div class="content">
+<% } %>
+
+<% if (typeof flash !== 'undefined' && flash) { %>
+  <div class="flash <%= flash.kind %>">
+    <%- icon(flash.kind === 'ok' ? 'check' : 'alert', 16) %>
+    <span><%= flash.message %></span>
+  </div>
+<% } %>

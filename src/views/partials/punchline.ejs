@@ -1,0 +1,21 @@
+<%
+/* clock-in ---- duration ---- clock-out, as one compact cell.
+   `r` is an evaluated day. A running shift draws the connector in the brand
+   colour and leaves the right-hand time open. */
+const running = r.stillIn;
+const inT  = r.firstInClock;
+const outT = r.lastOutClock;
+const mins = r.grossMinutes;
+%>
+<div class="punchline <%= running ? 'running' : '' %>">
+  <span class="t <%= inT ? (r.lateMinutes ? 'late' : '') : 'none' %>"><%= inT || '—' %></span>
+  <span class="span">
+    <span class="mins"><%= mins ? fmt.formatDuration(mins) : '' %></span>
+    <span class="rule"></span>
+  </span>
+  <% if (running) { %>
+    <span class="t" style="color:var(--brand)">now</span>
+  <% } else { %>
+    <span class="t <%= outT ? '' : 'none' %>"><%= outT || '—' %></span>
+  <% } %>
+</div>

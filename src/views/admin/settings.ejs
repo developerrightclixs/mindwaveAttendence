@@ -1,0 +1,157 @@
+<%- include('../partials/head') %>
+
+<div class="page-head">
+  <h1>Departments and holidays</h1>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <span class="chip-icon <%= selfEntry.enabled ? 'warn' : 'info' %>"><%- icon('edit', 15) %></span>
+    <h2>Employee manual entry</h2>
+    <span class="spacer"></span>
+    <span class="pill <%= selfEntry.enabled ? 'late' : 'weekly_off' %>">
+      <%= selfEntry.enabled ? 'OPEN' : 'closed' %>
+    </span>
+  </div>
+  <div class="card-body">
+    <p class="sub" style="margin:0 0 14px">
+      While this is open, staff can record their own start and end times for
+      past nights from <strong>Fill in my timings</strong> on their own page.
+      It exists so history can be completed by the people who know it.
+      <strong>Close it once the backfill is done</strong> &mdash; an attendance
+      record employees can keep rewriting is no longer evidence. Entries are
+      marked as self-reported and appear in the audit trail under their name.
+    </p>
+    <% if (isAdmin) { %>
+      <form method="post" action="/admin/self-entry">
+        <input type="hidden" name="_csrf" value="<%= csrf %>">
+        <div class="field-row">
+          <div class="field">
+            <label for="sefrom">Allow nights from</label>
+            <input id="sefrom" type="date" name="from"
+                   value="<%= selfEntry.from || '' %>">
+            <p class="hint">Nothing before this date can be filled in.</p>
+          </div>
+          <div class="field">
+            <label>Status</label>
+            <label style="font-weight:500; color:var(--text)">
+              <input type="checkbox" name="enabled" value="1"
+                     <%= selfEntry.enabled ? 'checked' : '' %>>
+              Open for manual entry
+            </label>
+          </div>
+        </div>
+        <button class="btn <%= selfEntry.enabled ? '' : 'primary' %>" type="submit">
+          <%= selfEntry.enabled ? 'Update / close' : 'Open manual entry' %>
+        </button>
+      </form>
+    <% } %>
+  </div>
+</div>
+
+<div class="grid two">
+
+  <!-- Departments ---------------------------------------------------------- -->
+  <div class="card">
+    <div class="card-head"><h2>Departments</h2></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Name</th><th class="num">Staff</th><th></th></tr></thead>
+        <tbody>
+          <% departments.forEach(function (d) { %>
+            <tr>
+              <td><strong><%= d.name %></strong></td>
+              <td class="num"><%= d.headcount %></td>
+              <td class="num">
+                <% if (isAdmin) { %>
+                  <form method="post" action="/admin/departments/<%= d.id %>/delete"
+                        onsubmit="return confirm('Remove <%= d.name %>? Its <%= d.headcount %> employee(s) become unassigned.')">
+                    <input type="hidden" name="_csrf" value="<%= csrf %>">
+                    <button class="btn small danger" type="submit">Remove</button>
+                  </form>
+                <% } %>
+              </td>
+            </tr>
+          <% }); %>
+          <% if (!departments.length) { %>
+            <tr><td colspan="3" class="empty">No departments yet.</td></tr>
+          <% } %>
+        </tbody>
+      </table>
+    </div>
+    <% if (isAdmin) { %>
+      <div class="card-body" style="border-top:1px solid var(--border)">
+        <form method="post" action="/admin/departments">
+          <input type="hidden" name="_csrf" value="<%= csrf %>">
+          <div class="field">
+            <label for="deptname">Add a department</label>
+            <input id="deptname" type="text" name="name" required placeholder="e.g. Engineering">
+          </div>
+          <button class="btn primary" type="submit">Add department</button>
+        </form>
+      </div>
+    <% } %>
+  </div>
+
+  <!-- Holidays ------------------------------------------------------------- -->
+  <div class="card">
+    <div class="card-head">
+      <h2>Holidays <%= year %></h2>
+      <div class="monthnav">
+        <a class="btn small" href="/admin/settings?year=<%= year - 1 %>">&larr; <%= year - 1 %></a>
+        <a class="btn small" href="/admin/settings?year=<%= year + 1 %>"><%= year + 1 %> &rarr;</a>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Date</th><th>Occasion</th><th></th></tr></thead>
+        <tbody>
+          <% holidays.forEach(function (h) { %>
+            <tr>
+              <td class="nowrap"><%= fmt.prettyDate(h.work_date) %></td>
+              <td><strong><%= h.name %></strong></td>
+              <td class="num">
+                <% if (isAdmin) { %>
+                  <form method="post" action="/admin/holidays/<%= h.work_date %>/delete">
+                    <input type="hidden" name="_csrf" value="<%= csrf %>">
+                    <button class="btn small danger" type="submit">Remove</button>
+                  </form>
+                <% } %>
+              </td>
+            </tr>
+          <% }); %>
+          <% if (!holidays.length) { %>
+            <tr><td colspan="3" class="empty">No holidays set for <%= year %>.</td></tr>
+          <% } %>
+        </tbody>
+      </table>
+    </div>
+    <% if (isAdmin) { %>
+      <div class="card-body" style="border-top:1px solid var(--border)">
+        <form method="post" action="/admin/holidays">
+          <input type="hidden" name="_csrf" value="<%= csrf %>">
+          <div class="field-row">
+            <div class="field">
+              <label for="hdate">Date</label>
+              <input id="hdate" type="date" name="work_date" required>
+            </div>
+            <div class="field">
+              <label for="hname">Occasion</label>
+              <input id="hname" type="text" name="name" required placeholder="e.g. Eid holiday">
+            </div>
+          </div>
+          <button class="btn primary" type="submit">Add holiday</button>
+          <p class="hint" style="margin-top:8px">
+            A holiday applies to everyone. Work recorded on one counts entirely as overtime.
+          </p>
+        </form>
+      </div>
+    <% } %>
+  </div>
+</div>
+
+<% if (isAdmin) { %>
+  <p class="sub"><a href="/admin/audit">View the audit trail</a> of every manual correction.</p>
+<% } %>
+
+<%- include('../partials/foot') %>

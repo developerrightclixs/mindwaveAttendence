@@ -1,0 +1,119 @@
+<%- include('partials/head') %>
+
+<div class="page-head">
+  <div>
+    <h1>Fill in my timings</h1>
+    <p class="sub">
+      <% if (window.enabled && window.from) { %>
+        Nights from <%= fmt.prettyDate(window.from) %> to <%= fmt.prettyDate(window.to) %>
+        <% if (shift) { %> &middot; your shift is <%= shift.start_time %>&ndash;<%= shift.end_time %><% } %>
+      <% } else { %>
+        Manual entry is currently closed.
+      <% } %>
+    </p>
+  </div>
+  <div class="head-actions">
+    <a class="btn" href="/">Back to my attendance</a>
+  </div>
+</div>
+
+<% if (!window.enabled || !window.from) { %>
+  <div class="card"><div class="empty">
+    <p style="font-size:16px">Manual entry is closed.</p>
+    <p class="dim">Ask HR to open it if you still need to record past nights.</p>
+  </div></div>
+
+<% } else if (!nights.length) { %>
+  <div class="card"><div class="empty">
+    <p style="font-size:16px">Nothing left to fill in.</p>
+    <p class="dim">Every night in the window has a start and an end time.</p>
+  </div></div>
+
+<% } else { %>
+
+  <div class="card">
+    <div class="card-head">
+      <span class="chip-icon warn"><%- icon('alert', 15) %></span>
+      <h2><%= nights.length %> night<%= nights.length === 1 ? '' : 's' %> to complete</h2>
+      <span class="spacer"></span>
+      <span class="dim" style="font-size:12px">Newest first</span>
+    </div>
+    <div class="card-body" style="border-bottom:1px solid var(--border)">
+      <p class="sub" style="margin:0">
+        Enter the times you actually started and finished. A night you have
+        already recorded cannot be changed here &mdash; ask HR to correct it.
+        Everything you save is recorded under your name.
+      </p>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th><span class="th"><%- icon('calendar', 13) %> Night</span></th>
+            <th><span class="th"><%- icon('clock', 13) %> Recorded so far</span></th>
+            <th>Started</th>
+            <th>Finished</th>
+            <th>Reason</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <% nights.forEach(function (d) { %>
+            <tr>
+              <td class="nowrap">
+                <strong><%= fmt.prettyDate(d.date).replace(/,\s*\d{4}$/, '') %></strong><br>
+                <span class="pill <%= d.status %>" style="margin-top:3px"><%= d.statusLabel %></span>
+              </td>
+              <td>
+                <% if (d.firstIn || d.lastOut) { %>
+                  <%- include('partials/punchline', { r: d }) %>
+                <% } else { %>
+                  <span class="dim">nothing recorded</span>
+                <% } %>
+                <% if (d.problems.length) { %>
+                  <ul class="problems"><% d.problems.forEach(function (p) { %><li><%= p %></li><% }); %></ul>
+                <% } %>
+              </td>
+
+              <% if (d.firstIn || d.lastOut) { %>
+                <td colspan="4" class="dim">
+                  Already partly recorded &mdash; ask HR to complete this night.
+                </td>
+              <% } else { %>
+                <td colspan="4" style="padding:0">
+                  <form method="post" action="/my/timings" style="display:flex; gap:8px;
+                        align-items:flex-end; flex-wrap:wrap; padding:8px 14px">
+                    <input type="hidden" name="_csrf" value="<%= csrf %>">
+                    <input type="hidden" name="work_date" value="<%= d.date %>">
+                    <div class="field" style="margin:0; width:120px">
+                      <input type="time" name="in_time" required
+                             value="<%= shift ? shift.start_time : '' %>">
+                    </div>
+                    <div class="field" style="margin:0; width:120px">
+                      <input type="time" name="out_time"
+                             value="<%= shift ? shift.end_time : '' %>">
+                    </div>
+                    <div class="field" style="margin:0; flex:1; min-width:150px">
+                      <input type="text" name="note" maxlength="120"
+                             placeholder="why it was missed (optional)">
+                    </div>
+                    <button class="btn primary small" type="submit">Save</button>
+                  </form>
+                </td>
+              <% } %>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <p class="sub">
+    The start and end boxes are pre-filled with your shift times &mdash; change
+    them to what actually happened. Leave the end time blank if you genuinely
+    do not remember it.
+  </p>
+<% } %>
+
+<%- include('partials/foot') %>

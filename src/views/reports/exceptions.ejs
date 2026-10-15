@@ -1,0 +1,84 @@
+<%- include('../partials/head') %>
+
+<div class="page-head">
+  <div>
+    <h1>Exceptions</h1>
+    <p class="sub">Everything worth a second look before payroll runs.
+      Today is excluded while it is still in progress.</p>
+  </div>
+  <div class="monthnav">
+    <a class="btn small" href="/reports/exceptions?month=<%= prevMonth %>">&larr;</a>
+    <span class="label"><%= fmt.prettyDate(from).split(',').slice(1).join(',').trim() %></span>
+    <a class="btn small" href="/reports/exceptions?month=<%= nextMonth %>">&rarr;</a>
+  </div>
+</div>
+
+<%
+  var byKind = { data: [], absent: [], late: [] };
+  items.forEach(function (i) { byKind[i.kind].push(i); });
+%>
+
+<div class="stats" style="margin-bottom:18px">
+  <div class="stat bad"><div class="n"><%= byKind.data.length %></div>
+    <div class="k">Missing punches</div></div>
+  <div class="stat bad"><div class="n"><%= byKind.absent.length %></div>
+    <div class="k">Unexplained absences</div></div>
+  <div class="stat warn"><div class="n"><%= byKind.late.length %></div>
+    <div class="k">Late 30min+</div></div>
+</div>
+
+<% if (!items.length) { %>
+  <div class="card"><div class="empty">
+    <p style="font-size:16px">Nothing needs attention this month.</p>
+    <p class="dim">Every day has a clean pair of punches or an explanation.</p>
+  </div></div>
+<% } else { %>
+  <div class="card">
+    <div class="card-head">
+      <h2><%= items.length %> item<%= items.length === 1 ? '' : 's' %></h2>
+      <span class="dim">Newest first</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th><th>Employee</th><th>Issue</th>
+            <th>Recorded</th><th class="num">Fix</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% items.forEach(function (i) { %>
+            <tr>
+              <td class="nowrap"><%= fmt.prettyDate(i.day.date).replace(/,\s*\d{4}$/, '') %></td>
+              <td>
+                <a href="/employee/<%= i.employee.id %>?month=<%= month %>">
+                  <div class="person">
+                    <%- avatar(i.employee.name, i.employee.emp_code, 'sm') %>
+                    <div>
+                      <div class="nm"><%= i.employee.name %></div>
+                      <div class="id"><%= i.employee.emp_code %></div>
+                    </div>
+                  </div>
+                </a>
+              </td>
+              <td>
+                <span class="pill <%= i.kind === 'late' ? 'late' : 'absent' %>">
+                  <%= i.kind === 'data' ? 'Missing punch' : i.kind === 'absent' ? 'Absent' : 'Late' %>
+                </span>
+                <span class="dim"><%= i.detail %></span>
+              </td>
+              <td class="time">
+                <%= i.day.firstInClock || '—' %> &rarr; <%= i.day.lastOutClock || '—' %>
+              </td>
+              <td class="num">
+                <a class="btn small" href="/admin/register?date=<%= i.day.date %>">Open day</a>
+              </td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+<% } %>
+
+<%- include('../partials/foot') %>

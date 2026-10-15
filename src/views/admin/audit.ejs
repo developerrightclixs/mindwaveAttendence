@@ -1,0 +1,38 @@
+<%- include('../partials/head') %>
+
+<div class="page-head">
+  <div>
+    <h1>Audit trail</h1>
+    <p class="sub">Every manual correction, login and configuration change.
+      The 300 most recent are shown.</p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>When</th><th>Who</th><th>Action</th><th>Target</th><th>Detail</th></tr>
+      </thead>
+      <tbody>
+        <% rows.forEach(function (r) { %>
+          <tr>
+            <td class="time nowrap"><%= r.at %></td>
+            <td>
+              <%= r.actor_name || '—' %>
+              <% if (r.actor_gone) { %><span class="badge-role">removed</span><% } %>
+            </td>
+            <td><span class="badge-role"><%= r.action %></span></td>
+            <td class="dim"><%= r.target || '' %></td>
+            <td class="dim"><%= r.detail || '' %></td>
+          </tr>
+        <% }); %>
+        <% if (!rows.length) { %>
+          <tr><td colspan="5" class="empty">Nothing recorded yet.</td></tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/foot') %>

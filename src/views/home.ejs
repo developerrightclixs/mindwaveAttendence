@@ -1,0 +1,134 @@
+<%- include('partials/head') %>
+
+<div class="page-head">
+  <div>
+    <h1>My attendance</h1>
+    <p class="sub">
+      <%= employee.emp_code %>
+      &middot; <%= employee.shift_name || 'No shift assigned' %>
+      <% if (employee.department_name) { %> &middot; <%= employee.department_name %><% } %>
+    </p>
+  </div>
+  <div class="head-actions">
+    <% if (selfEntryOpen) { %>
+      <a class="btn primary" href="/my/timings"><%- icon('edit', 15) %> Fill in my timings</a>
+    <% } %>
+    <a class="btn" href="/employee/<%= employee.id %>">Full month view</a>
+  </div>
+</div>
+
+<!-- Punch panel ------------------------------------------------------------ -->
+<div class="card">
+  <div class="card-body">
+    <div class="punch-panel">
+      <div>
+        <div class="punch-clock" id="clock">--:--</div>
+        <div class="punch-meta"><%= fmt.prettyDate(state.workDate) %></div>
+      </div>
+
+      <div style="flex:1">
+        <% if (todayDay && todayDay.stillIn) { %>
+          <p style="margin:0 0 7px">
+            <span class="pill live">&#9679; Checked in</span>
+            since <strong><%= todayDay.firstInClock %></strong>
+            &middot; <%= fmt.formatDuration(todayDay.grossMinutes) %> so far
+          </p>
+        <% } else if (todayDay && todayDay.firstIn) { %>
+          <p style="margin:0 0 7px">
+            Today: <strong><%= todayDay.firstInClock %></strong> &rarr;
+            <strong><%= todayDay.lastOutClock || '—' %></strong>
+            &middot; <%= fmt.formatDuration(todayDay.workedMinutes) %> worked
+          </p>
+        <% } else { %>
+          <p style="margin:0 0 7px" class="dim">You have not checked in today.</p>
+        <% } %>
+
+        <% if (todayDay && todayDay.lateMinutes > 0) { %>
+          <p class="warn-text" style="margin:0 0 7px">
+            <%= fmt.formatDuration(todayDay.lateMinutes) %> after your shift start.
+          </p>
+        <% } %>
+        <% if (todayDay && todayDay.overtimeMinutes > 0) { %>
+          <p class="sub" style="margin:0 0 7px">
+            Overtime so far: <%= fmt.formatDuration(todayDay.overtimeMinutes) %>
+          </p>
+        <% } %>
+      </div>
+
+      <form method="post" action="/punch">
+        <input type="hidden" name="_csrf" value="<%= csrf %>">
+        <input type="hidden" name="kind" value="<%= state.next %>">
+        <button class="btn primary big" type="submit">
+          <%= state.next === 'in' ? 'Check in' : 'Check out' %>
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- This month ------------------------------------------------------------- -->
+<h2><%= fmt.prettyDate(month).split(',').slice(1).join(',').trim() %> so far</h2>
+
+<div class="stats" style="margin-bottom:18px">
+  <div class="stat good"><div class="n"><%= totals.payableDays %></div><div class="k">Payable days</div></div>
+  <div class="stat"><div class="n"><%= fmt.formatDuration(totals.workedMinutes) %></div><div class="k">Worked</div></div>
+  <div class="stat warn"><div class="n"><%= totals.late %></div><div class="k">Late days</div></div>
+  <div class="stat bad"><div class="n"><%= totals.absent %></div><div class="k">Absent</div></div>
+  <div class="stat info"><div class="n"><%= fmt.formatDuration(totals.overtimeMinutes) %></div><div class="k">Overtime</div></div>
+</div>
+
+<div class="card">
+  <div class="card-head"><h2>Day by day</h2></div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Status</th>
+          <th><span class="th">Clock-in &amp; out</span></th>
+          <th class="num">Worked</th>
+          <th class="num">Late</th>
+          <th class="num">Overtime</th>
+          <th>Note</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% days.forEach(function (d) { %>
+          <% if (d.status === 'not_employed' || d.status === 'upcoming') return; %>
+          <tr class="<%= d.isOff ? 'is-off' : '' %> <%= d.date === today ? 'is-today' : '' %>">
+            <td class="nowrap"><%= fmt.prettyDate(d.date).replace(/,\s*\d{4}$/, '') %></td>
+            <td><span class="pill <%= d.inProgress ? 'in_progress' : d.status %>"><%= d.statusLabel %></span></td>
+            <td><%- include('partials/punchline', { r: d }) %></td>
+            <td class="num"><%= d.workedMinutes ? fmt.formatDuration(d.workedMinutes) : '—' %></td>
+            <td class="num <%= d.lateMinutes ? 'warn-text' : 'dim' %>">
+              <%= d.lateMinutes ? fmt.formatDuration(d.lateMinutes) : '—' %>
+            </td>
+            <td class="num"><%= d.overtimeMinutes ? fmt.formatDuration(d.overtimeMinutes) : '—' %></td>
+            <td class="dim">
+              <%= d.note || '' %>
+              <% if (d.problems.length) { %>
+                <span class="warn-text">&#9888; <%= d.problems.join('; ') %></span>
+              <% } %>
+            </td>
+          </tr>
+        <% }); %>
+        <% if (!days.length) { %>
+          <tr><td colspan="8" class="empty">Nothing recorded yet this month.</td></tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  // Local clock, so the punch panel shows the time the server will record.
+  function tick() {
+    var d = new Date();
+    var p = function (n) { return String(n).padStart(2, '0'); };
+    document.getElementById('clock').textContent = p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+  tick();
+  setInterval(tick, 10000);
+</script>
+
+<%- include('partials/foot') %>

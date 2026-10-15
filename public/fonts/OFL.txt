@@ -1,0 +1,12 @@
+Afacad and Urbanist are licensed under the SIL Open Font License, Version 1.1.
+
+  Afacad    Copyright (c) 2023, Ivan Petrov and Anna Petrova
+  Urbanist  Copyright (c) 2020, Corey Hu
+
+The full licence text is available at https://openfontlicense.org and in each
+font's repository. The OFL permits bundling and self-hosting these files,
+which is why they are served from /fonts rather than a CDN: this application
+runs on an office LAN and an entrance kiosk that may have no internet access.
+
+These files are the Latin and Latin-Extended subsets of the variable versions,
+downloaded from Google Fonts.

@@ -1,0 +1,75 @@
+<%- include('../partials/head') %>
+
+<div class="page-head">
+  <div>
+    <h1>Employees</h1>
+    <p class="sub"><%= employees.filter(function (e) { return e.active; }).length %> active
+      &middot; <%= employees.length %> total</p>
+  </div>
+  <% if (isAdmin) { %>
+    <div class="btn-row">
+      <a class="btn" href="/admin/import"><%- icon('upload', 15) %> Import from spreadsheet</a>
+      <a class="btn primary" href="/admin/employees/new"><%- icon('plus', 15) %> Add employee</a>
+    </div>
+  <% } %>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th><span class="th">Employee</span></th>
+          <th>Department</th>
+          <th>Shift</th>
+          <th>Role</th>
+          <th>Login</th>
+          <th>Joined</th>
+          <% if (isAdmin) { %><th></th><% } %>
+        </tr>
+      </thead>
+      <tbody>
+        <% employees.forEach(function (e) { %>
+          <tr style="<%= e.active ? '' : 'opacity:.55' %>">
+            <td>
+              <a href="/employee/<%= e.id %>">
+                <div class="person">
+                  <%- avatar(e.name, e.emp_code, 'sm') %>
+                  <div>
+                    <div class="nm"><%= e.name %>
+                      <% if (!e.active) { %><span class="badge-role">inactive</span><% } %>
+                    </div>
+                    <div class="id"><%= e.emp_code %></div>
+                  </div>
+                </div>
+              </a>
+            </td>
+            <td class="dim"><%= e.department_name || '—' %></td>
+            <td class="dim"><%= e.shift_name || '—' %></td>
+            <td><span class="badge-role <%= e.role %>"><%= e.role %></span></td>
+            <td class="dim"><%= e.email || 'kiosk only' %></td>
+            <td class="dim nowrap"><%= e.joined_on %></td>
+            <% if (isAdmin) { %>
+              <td class="num">
+                <a class="btn small" href="/admin/employees/<%= e.id %>/edit">Edit</a>
+              </td>
+            <% } %>
+          </tr>
+        <% }); %>
+        <% if (!employees.length) { %>
+          <tr><td colspan="<%= isAdmin ? 7 : 6 %>" class="empty">
+            <p>No employees yet.</p>
+            <% if (isAdmin) { %>
+              <div class="btn-row" style="justify-content:center">
+                <a class="btn primary" href="/admin/import">Import from spreadsheet</a>
+                <a class="btn" href="/admin/employees/new">Add one by hand</a>
+              </div>
+            <% } %>
+          </td></tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/foot') %>

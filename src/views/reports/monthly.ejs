@@ -1,0 +1,123 @@
+<%- include('../partials/head') %>
+
+<div class="page-head">
+  <div>
+    <h1>Monthly report</h1>
+    <p class="sub"><%= fmt.prettyDate(from) %> &ndash; <%= fmt.prettyDate(to) %></p>
+  </div>
+  <div class="btn-row">
+    <a class="btn" href="/reports/monthly?month=<%= month %><%= departmentId ? '&dept=' + departmentId : '' %>&format=csv">
+      Export summary (CSV)
+    </a>
+    <a class="btn" href="/reports/detail?month=<%= month %>">Export day-by-day (CSV)</a>
+  </div>
+</div>
+
+<div class="toolbar">
+  <div class="monthnav">
+    <a class="btn small" href="/reports/monthly?month=<%= prevMonth %><%= departmentId ? '&dept=' + departmentId : '' %>">&larr;</a>
+    <span class="label"><%= fmt.prettyDate(from).split(',').slice(1).join(',').trim() %></span>
+    <a class="btn small" href="/reports/monthly?month=<%= nextMonth %><%= departmentId ? '&dept=' + departmentId : '' %>">&rarr;</a>
+  </div>
+  <form method="get" action="/reports/monthly">
+    <input type="hidden" name="month" value="<%= month %>">
+    <div class="field">
+      <label for="dept">Department</label>
+      <select id="dept" name="dept">
+        <option value="">All departments</option>
+        <% departments.forEach(function (d) { %>
+          <option value="<%= d.id %>" <%= departmentId === d.id ? 'selected' : '' %>>
+            <%= d.name %>
+          </option>
+        <% }); %>
+      </select>
+    </div>
+    <button class="btn primary" type="submit">Apply</button>
+  </form>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Employee</th>
+          <th>Department</th>
+          <th class="num">Payable days</th>
+          <th class="num">Present</th>
+          <th class="num">Late</th>
+          <th class="num">Half</th>
+          <th class="num">Absent</th>
+          <th class="num">Leave</th>
+          <th class="num">Worked</th>
+          <th class="num">Expected</th>
+          <th class="num">Overtime</th>
+          <th class="num">Late time</th>
+          <th class="num">Flags</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% rows.forEach(function (r) { %>
+          <tr>
+            <td>
+              <a href="/employee/<%= r.employee.id %>?month=<%= month %>">
+                <div class="person">
+                  <%- avatar(r.employee.name, r.employee.emp_code, 'sm') %>
+                  <div>
+                    <div class="nm"><%= r.employee.name %></div>
+                    <div class="id"><%= r.employee.emp_code %></div>
+                  </div>
+                </div>
+              </a>
+            </td>
+            <td class="dim"><%= r.employee.department_name || '—' %></td>
+            <td class="num"><strong><%= r.totals.payableDays %></strong></td>
+            <td class="num"><%= r.totals.present %></td>
+            <td class="num <%= r.totals.late ? 'warn-text' : 'dim' %>"><%= r.totals.late %></td>
+            <td class="num"><%= r.totals.halfDay %></td>
+            <td class="num <%= r.totals.absent ? 'bad-text' : 'dim' %>"><%= r.totals.absent %></td>
+            <td class="num"><%= r.totals.leave %></td>
+            <td class="num"><%= fmt.formatDuration(r.totals.workedMinutes) %></td>
+            <td class="num dim"><%= fmt.formatDuration(r.totals.expectedMinutes) %></td>
+            <td class="num"><%= r.totals.overtimeMinutes ? fmt.formatDuration(r.totals.overtimeMinutes) : '—' %></td>
+            <td class="num <%= r.totals.lateMinutes ? 'warn-text' : 'dim' %>">
+              <%= r.totals.lateMinutes ? fmt.formatDuration(r.totals.lateMinutes) : '—' %>
+            </td>
+            <td class="num">
+              <% if (r.totals.problemDays) { %>
+                <a class="warn-text" href="/reports/exceptions?month=<%= month %>">
+                  &#9888; <%= r.totals.problemDays %></a>
+              <% } else { %><span class="dim">—</span><% } %>
+            </td>
+          </tr>
+        <% }); %>
+        <% if (!rows.length) { %>
+          <tr><td colspan="13" class="empty">No employees match that filter.</td></tr>
+        <% } %>
+      </tbody>
+      <% if (rows.length) { %>
+        <tfoot>
+          <tr>
+            <td colspan="2">Total &mdash; <%= rows.length %> staff</td>
+            <td class="num"><%= rows.reduce(function (s, r) { return s + r.totals.payableDays; }, 0) %></td>
+            <td class="num"><%= rows.reduce(function (s, r) { return s + r.totals.present; }, 0) %></td>
+            <td class="num"><%= rows.reduce(function (s, r) { return s + r.totals.late; }, 0) %></td>
+            <td class="num"><%= rows.reduce(function (s, r) { return s + r.totals.halfDay; }, 0) %></td>
+            <td class="num"><%= rows.reduce(function (s, r) { return s + r.totals.absent; }, 0) %></td>
+            <td class="num"><%= rows.reduce(function (s, r) { return s + r.totals.leave; }, 0) %></td>
+            <td class="num"><%= fmt.formatDuration(rows.reduce(function (s, r) { return s + r.totals.workedMinutes; }, 0)) %></td>
+            <td class="num"><%= fmt.formatDuration(rows.reduce(function (s, r) { return s + r.totals.expectedMinutes; }, 0)) %></td>
+            <td class="num"><%= fmt.formatDuration(rows.reduce(function (s, r) { return s + r.totals.overtimeMinutes; }, 0)) %></td>
+            <td class="num"><%= fmt.formatDuration(rows.reduce(function (s, r) { return s + r.totals.lateMinutes; }, 0)) %></td>
+            <td></td>
+          </tr>
+        </tfoot>
+      <% } %>
+    </table>
+  </div>
+</div>
+
+<p class="sub">Payable days counts a half day as 0.5. Expected hours exclude weekly
+  offs and holidays.</p>
+
+<%- include('../partials/foot') %>

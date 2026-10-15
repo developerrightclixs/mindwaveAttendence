@@ -1,0 +1,112 @@
+<%- include('partials/head') %>
+
+<div class="page-head">
+  <div>
+    <h1><%= data.employee.name %></h1>
+    <p class="sub">
+      <%= data.employee.emp_code %>
+      &middot; <%= data.employee.shift_name || 'No shift' %>
+      <% if (data.employee.department_name) { %> &middot; <%= data.employee.department_name %><% } %>
+      &middot; joined <%= data.employee.joined_on %>
+    </p>
+  </div>
+  <div class="monthnav">
+    <a class="btn small" href="/employee/<%= data.employee.id %>?month=<%= prevMonth %>">&larr;</a>
+    <span class="label"><%= fmt.prettyDate(from).split(',').slice(1).join(',').trim() %></span>
+    <a class="btn small" href="/employee/<%= data.employee.id %>?month=<%= nextMonth %>">&rarr;</a>
+  </div>
+</div>
+
+<div class="stats" style="margin-bottom:18px">
+  <div class="stat good"><div class="n"><%= data.totals.payableDays %></div><div class="k">Payable days</div></div>
+  <div class="stat"><div class="n"><%= fmt.formatDuration(data.totals.workedMinutes) %></div><div class="k">Worked</div></div>
+  <div class="stat"><div class="n"><%= fmt.formatDuration(data.totals.expectedMinutes) %></div><div class="k">Expected</div></div>
+  <div class="stat warn"><div class="n"><%= data.totals.late %></div><div class="k">Late days</div></div>
+  <div class="stat bad"><div class="n"><%= data.totals.absent %></div><div class="k">Absent</div></div>
+  <div class="stat info"><div class="n"><%= fmt.formatDuration(data.totals.overtimeMinutes) %></div><div class="k">Overtime</div></div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>Day by day</h2>
+    <% if (canEdit) { %>
+      <a class="btn small" href="/admin/register?date=<%= today %>">Correct a day</a>
+    <% } %>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Status</th>
+          <th><span class="th">Clock-in &amp; out</span></th>
+          <th class="num">Worked</th>
+          <th class="num">Break</th>
+          <th class="num">Late</th>
+          <th class="num">Early</th>
+          <th class="num">Overtime</th>
+          <th>Note</th>
+          <% if (canEdit) { %><th></th><% } %>
+        </tr>
+      </thead>
+      <tbody>
+        <% data.days.forEach(function (d) { %>
+          <% if (d.status === 'not_employed' || d.status === 'upcoming') return; %>
+          <tr class="<%= d.isOff ? 'is-off' : '' %> <%= d.date === today ? 'is-today' : '' %>">
+            <td class="nowrap"><%= fmt.prettyDate(d.date).replace(/,\s*\d{4}$/, '') %></td>
+            <td><span class="pill <%= d.inProgress ? 'in_progress' : d.status %>"><%= d.statusLabel %></span></td>
+            <td>
+              <%- include('partials/punchline', { r: d }) %>
+              <% if (d.sessions.some(function (x) { return x.in && x.in.source === 'self'; })) { %>
+                <span class="pill weekly_off" title="Entered after the fact">self-reported</span>
+              <% } %>
+            </td>
+            <td class="num"><%= d.workedMinutes ? fmt.formatDuration(d.workedMinutes) : '—' %></td>
+            <td class="num dim"><%= d.breakMinutes ? d.breakMinutes + 'm' : '—' %></td>
+            <td class="num <%= d.lateMinutes ? 'warn-text' : 'dim' %>">
+              <%= d.lateMinutes ? fmt.formatDuration(d.lateMinutes) : '—' %>
+            </td>
+            <td class="num <%= d.earlyMinutes ? 'warn-text' : 'dim' %>">
+              <%= d.earlyMinutes ? fmt.formatDuration(d.earlyMinutes) : '—' %>
+            </td>
+            <td class="num"><%= d.overtimeMinutes ? fmt.formatDuration(d.overtimeMinutes) : '—' %></td>
+            <td class="dim">
+              <%= d.note || '' %>
+              <% if (d.problems.length) { %>
+                <ul class="problems">
+                  <% d.problems.forEach(function (p) { %><li><%= p %></li><% }); %>
+                </ul>
+              <% } %>
+            </td>
+            <% if (canEdit) { %>
+              <td class="num">
+                <a class="btn small" href="/admin/register?date=<%= d.date %>">Edit</a>
+              </td>
+            <% } %>
+          </tr>
+        <% }); %>
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="4">Month total</td>
+          <td class="num"><%= fmt.formatDuration(data.totals.workedMinutes) %></td>
+          <td></td>
+          <td class="num"><%= fmt.formatDuration(data.totals.lateMinutes) %></td>
+          <td class="num"><%= fmt.formatDuration(data.totals.earlyMinutes) %></td>
+          <td class="num"><%= fmt.formatDuration(data.totals.overtimeMinutes) %></td>
+          <td colspan="<%= canEdit ? 2 : 1 %>"></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+
+<div class="legend">
+  <span><span class="pill present">Present</span> full day worked</span>
+  <span><span class="pill late">Late</span> arrived after grace</span>
+  <span><span class="pill half_day">Half day</span> counts 0.5</span>
+  <span><span class="pill absent">Absent</span> nothing recorded</span>
+  <span><span class="pill weekly_off">Weekly off</span> not expected in</span>
+</div>
+
+<%- include('partials/foot') %>

@@ -1,0 +1,194 @@
+<%- include('../partials/head') %>
+
+<%
+  // "+3 vs Friday" reads better than "+3 vs yesterday" on a Mon-Fri night
+  // shift, where the previous working night is often not yesterday.
+  const prevName = fmt.prettyDate(d.prevDate).split(',')[0];
+  function delta(now, before, goodWhenUp) {
+    const diff = now - before;
+    if (!diff) return { cls: '', text: 'same as ' + prevName };
+    const up = diff > 0;
+    const good = goodWhenUp ? up : !up;
+    return {
+      cls: good ? 'up' : 'down',
+      text: (up ? '+' : '') + diff + ' vs ' + prevName,
+    };
+  }
+  function metric(label, value, before, goodWhenUp, tone) {
+    const dd = delta(value, before, goodWhenUp);
+    return '<div class="metric ' + (tone || '') + '">'
+      + '<div class="k">' + label + '</div>'
+      + '<div class="n">' + value + '</div>'
+      + '<div class="d ' + dd.cls + '">' + dd.text + '</div>'
+      + '</div>';
+  }
+%>
+
+<div class="page-head">
+  <div>
+    <h1>Overview</h1>
+    <p class="sub">
+      Night of <%= fmt.prettyDate(d.date) %>
+      <% if (shift) { %> &middot; <%= shift.start_time %>&ndash;<%= shift.end_time %><% } %>
+    </p>
+  </div>
+  <div class="head-actions">
+    <a class="btn" href="/reports/monthly"><%- icon('chart', 15) %> Monthly report</a>
+    <a class="btn" href="/admin/register?date=<%= d.date %>"><%- icon('calendar', 15) %> Open register</a>
+  </div>
+</div>
+
+<!-- Summary cards -------------------------------------------------------- -->
+<div class="summary-row">
+
+  <div class="card" style="margin:0">
+    <div class="card-head">
+      <span class="chip-icon ok"><%- icon('check', 15) %></span>
+      <h2>Present</h2>
+      <span class="spacer"></span>
+      <span class="dim" style="font-size:12px"><%= d.headcount %> staff</span>
+    </div>
+    <div class="metrics">
+      <%- metric('On time', d.now.onTime, d.prev.onTime, true, 'is-ok') %>
+      <%- metric('Late', d.now.late, d.prev.late, false, d.now.late ? 'is-warn' : '') %>
+      <%- metric('Early exit', d.now.earlyExit, d.prev.earlyExit, false, '') %>
+    </div>
+  </div>
+
+  <div class="card" style="margin:0">
+    <div class="card-head">
+      <span class="chip-icon bad"><%- icon('x', 15) %></span>
+      <h2>Not present</h2>
+      <span class="spacer"></span>
+      <% if (d.now.noCheckout) { %>
+        <a class="pill absent" href="/reports/exceptions">needs fixing</a>
+      <% } %>
+    </div>
+    <div class="metrics">
+      <%- metric('Absent', d.now.absent, d.prev.absent, false, d.now.absent ? 'is-bad' : '') %>
+      <%- metric('On leave', d.now.leave, d.prev.leave, false, '') %>
+      <%- metric('No check-out', d.now.noCheckout, d.prev.noCheckout, false, d.now.noCheckout ? 'is-bad' : '') %>
+    </div>
+  </div>
+
+  <div class="card" style="margin:0">
+    <div class="card-head">
+      <span class="chip-icon info"><%- icon('clock', 15) %></span>
+      <h2>Hours</h2>
+      <span class="spacer"></span>
+      <% if (d.onPremise) { %>
+        <span class="pill live"><span class="dot beat"></span><%= d.onPremise %> in now</span>
+      <% } %>
+    </div>
+    <div class="metrics">
+      <div class="metric">
+        <div class="k">Worked</div>
+        <div class="n"><%= (d.now.workedMinutes / 60).toFixed(1) %><span style="font-size:15px">h</span></div>
+        <div class="d <%= d.now.workedMinutes >= d.prev.workedMinutes ? 'up' : 'down' %>">
+          <%= d.now.workedMinutes >= d.prev.workedMinutes ? '+' : '' %><%= ((d.now.workedMinutes - d.prev.workedMinutes) / 60).toFixed(1) %>h vs <%= prevName %>
+        </div>
+      </div>
+      <div class="metric">
+        <div class="k">Overtime</div>
+        <div class="n"><%= (d.now.overtimeMinutes / 60).toFixed(1) %><span style="font-size:15px">h</span></div>
+        <div class="d"><%= fmt.formatDuration(d.prev.overtimeMinutes) %> on <%= prevName %></div>
+      </div>
+      <%- metric('Weekly off', d.now.weeklyOff, d.prev.weeklyOff, true, '') %>
+    </div>
+  </div>
+</div>
+
+<!-- Needs attention ------------------------------------------------------- -->
+<% if (d.problems.length) { %>
+  <div class="card">
+    <div class="card-head">
+      <span class="chip-icon warn"><%- icon('alert', 15) %></span>
+      <h2>Needs attention tonight</h2>
+      <span class="spacer"></span>
+      <a class="btn small" href="/reports/exceptions">All exceptions</a>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <tbody>
+          <% d.problems.forEach(function (r) { %>
+            <tr>
+              <td style="width:280px">
+                <div class="person">
+                  <%- avatar(r.employee.name, r.employee.emp_code, 'sm') %>
+                  <div>
+                    <div class="nm"><%= r.employee.name %></div>
+                    <div class="id"><%= r.employee.emp_code %></div>
+                  </div>
+                </div>
+              </td>
+              <td class="warn-text"><%= r.problems.join('; ') %></td>
+              <td class="num">
+                <a class="btn small" href="/admin/register?date=<%= d.date %>">Fix</a>
+              </td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+<% } %>
+
+<!-- Who is in ------------------------------------------------------------- -->
+<div class="card">
+  <div class="card-head">
+    <span class="chip-icon ok"><%- icon('users', 15) %></span>
+    <h2>Tonight</h2>
+    <span class="spacer"></span>
+    <span class="dim" style="font-size:12px"><%= d.onPremise %> of <%= d.headcount %> on premise</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th><span class="th"><%- icon('user', 13) %> Employee</span></th>
+          <th><span class="th"><%- icon('clock', 13) %> Clock-in &amp; out</span></th>
+          <th><span class="th"><%- icon('upDown', 13) %> Status</span></th>
+          <th class="num">Overtime</th>
+          <th class="num">Late</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% d.rows.forEach(function (r) { %>
+          <% if (r.status === 'not_employed') return; %>
+          <tr class="<%= r.isOff ? 'is-off' : '' %>">
+            <td>
+              <a href="/employee/<%= r.employee.id %>">
+                <div class="person">
+                  <%- avatar(r.employee.name, r.employee.emp_code, 'sm') %>
+                  <div>
+                    <div class="nm"><%= r.employee.name %></div>
+                    <div class="id"><%= r.employee.emp_code %></div>
+                  </div>
+                </div>
+              </a>
+            </td>
+            <td><%- include('../partials/punchline', { r: r }) %></td>
+            <td>
+              <span class="pill <%= r.inProgress ? 'in_progress' : r.status %>">
+                <% if (r.inProgress) { %><span class="dot beat"></span><% } %>
+                <%= r.statusLabel %>
+              </span>
+            </td>
+            <td class="num"><%= r.overtimeMinutes ? fmt.formatDuration(r.overtimeMinutes) : '—' %></td>
+            <td class="num <%= r.lateMinutes ? 'warn-text' : 'dim' %>">
+              <%= r.lateMinutes ? fmt.formatDuration(r.lateMinutes) : '—' %>
+            </td>
+          </tr>
+        <% }); %>
+        <% if (!d.rows.length) { %>
+          <tr><td colspan="5" class="empty">
+            <p>No active employees yet.</p>
+            <a class="btn primary" href="/admin/import">Import your staff</a>
+          </td></tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/foot') %>

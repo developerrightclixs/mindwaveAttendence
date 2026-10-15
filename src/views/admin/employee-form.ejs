@@ -1,0 +1,161 @@
+<%- include('../partials/head') %>
+
+<div class="page-head">
+  <h1><%= emp && emp.id ? 'Edit employee' : 'Add employee' %></h1>
+  <a class="btn" href="/admin/employees">Back to list</a>
+</div>
+
+<% if (error) { %><div class="flash err"><%= error %></div><% } %>
+
+<form method="post"
+      action="<%= emp && emp.id ? '/admin/employees/' + emp.id : '/admin/employees' %>">
+  <input type="hidden" name="_csrf" value="<%= csrf %>">
+
+  <div class="grid two">
+    <div>
+      <fieldset>
+        <legend>Identity</legend>
+
+        <div class="field-row">
+          <div class="field">
+            <label for="emp_code">Employee code *</label>
+            <input id="emp_code" name="emp_code" type="text" required
+                   value="<%= emp ? (emp.emp_code || '') : '' %>">
+            <p class="hint">On the badge. Used at the kiosk.</p>
+          </div>
+          <div class="field">
+            <label for="joined_on">Joined on</label>
+            <input id="joined_on" name="joined_on" type="date"
+                   value="<%= emp ? (emp.joined_on || today) : today %>">
+            <p class="hint">Earlier days are never counted absent.</p>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="name">Full name *</label>
+          <input id="name" name="name" type="text" required
+                 value="<%= emp ? (emp.name || '') : '' %>">
+        </div>
+
+        <div class="field">
+          <label><input type="checkbox" name="active" value="1"
+                        <%= !emp || emp.active ? 'checked' : '' %>> Active</label>
+          <p class="hint">Inactive staff keep their history but cannot check in or sign in.</p>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Placement</legend>
+
+        <div class="field">
+          <label for="department_id">Department</label>
+          <select id="department_id" name="department_id">
+            <option value="">— none —</option>
+            <% departments.forEach(function (d) { %>
+              <option value="<%= d.id %>"
+                <%= emp && Number(emp.department_id) === d.id ? 'selected' : '' %>>
+                <%= d.name %>
+              </option>
+            <% }); %>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="shift_id">Shift</label>
+          <select id="shift_id" name="shift_id">
+            <option value="">— none (uses 09:00–18:00 defaults) —</option>
+            <% shifts.forEach(function (s) { %>
+              <option value="<%= s.id %>"
+                <%= emp && Number(emp.shift_id) === s.id ? 'selected' : '' %>>
+                <%= s.name %> (<%= s.start_time %>–<%= s.end_time %>)
+              </option>
+            <% }); %>
+          </select>
+          <p class="hint">The shift decides late, half-day and overtime thresholds.</p>
+        </div>
+
+        <div class="field">
+          <label for="manager_id">Reports to</label>
+          <select id="manager_id" name="manager_id">
+            <option value="">— nobody —</option>
+            <% managers.forEach(function (m) { %>
+              <option value="<%= m.id %>"
+                <%= emp && Number(emp.manager_id) === m.id ? 'selected' : '' %>>
+                <%= m.name %>
+              </option>
+            <% }); %>
+          </select>
+          <p class="hint">Managers can see the attendance of people who report to them.</p>
+        </div>
+
+        <div class="field">
+          <label for="role">Role</label>
+          <select id="role" name="role">
+            <option value="employee" <%= !emp || emp.role === 'employee' ? 'selected' : '' %>>
+              Employee — sees only their own attendance
+            </option>
+            <option value="manager" <%= emp && emp.role === 'manager' ? 'selected' : '' %>>
+              Manager — sees their team and reports
+            </option>
+            <option value="admin" <%= emp && emp.role === 'admin' ? 'selected' : '' %>>
+              Admin — full access and configuration
+            </option>
+          </select>
+        </div>
+      </fieldset>
+    </div>
+
+    <div>
+      <fieldset>
+        <legend>Browser sign-in</legend>
+
+        <div class="field">
+          <label for="email">Work email</label>
+          <input id="email" name="email" type="email"
+                 value="<%= emp ? (emp.email || '') : '' %>">
+          <p class="hint">Leave blank for staff who only ever use the kiosk.</p>
+        </div>
+
+        <div class="field">
+          <label for="password"><%= emp && emp.id ? 'Set a new password' : 'Password' %></label>
+          <input id="password" name="password" type="password" autocomplete="new-password"
+                 minlength="8">
+          <p class="hint">
+            <% if (emp && emp.id) { %>Leave blank to keep the current password.
+            <% } else { %>At least 8 characters. Required if you set an email.<% } %>
+          </p>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Kiosk PIN</legend>
+
+        <div class="field">
+          <label for="pin"><%= emp && emp.id ? 'Set a new PIN' : 'PIN' %></label>
+          <input id="pin" name="pin" type="text" inputmode="numeric" pattern="[0-9]{4,8}"
+                 autocomplete="off">
+          <p class="hint">4 to 8 digits. Needed only for the entrance kiosk.</p>
+        </div>
+
+        <% if (emp && emp.id && emp.pin_hash) { %>
+          <div class="field">
+            <label><input type="checkbox" name="clear_pin" value="1">
+              Remove this employee's PIN</label>
+          </div>
+        <% } %>
+      </fieldset>
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn primary" type="submit">
+      <%= emp && emp.id ? 'Save changes' : 'Add employee' %>
+    </button>
+    <a class="btn" href="/admin/employees">Cancel</a>
+    <% if (emp && emp.id) { %>
+      <a class="btn" href="/employee/<%= emp.id %>">View attendance</a>
+    <% } %>
+  </div>
+</form>
+
+<%- include('../partials/foot') %>

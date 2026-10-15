@@ -1,0 +1,229 @@
+<%- include('../partials/head') %>
+
+<div class="page-head">
+  <div>
+    <h1>Register</h1>
+    <p class="sub">
+      Night of <%= prettyDay %>
+      <% if (date === today) { %> &middot; <span style="color:var(--brand);font-weight:600">in progress</span><% } %>
+    </p>
+  </div>
+
+  <div class="head-actions">
+    <span class="stepper">
+      <a href="/admin/register?date=<%= prev %><%= departmentId ? '&dept=' + departmentId : '' %>"
+         title="Previous night"><%- icon('chevronL', 15) %></a>
+      <span class="label"><%= fmt.prettyDate(date).replace(/,\s*\d{4}$/, '') %></span>
+      <a href="/admin/register?date=<%= next %><%= departmentId ? '&dept=' + departmentId : '' %>"
+         title="Next night"><%- icon('chevronR', 15) %></a>
+    </span>
+    <% if (date !== today) { %>
+      <a class="btn" href="/admin/register?date=<%= today %>">Tonight</a>
+    <% } %>
+    <a class="btn" href="/reports/detail?month=<%= date %>"><%- icon('download', 15) %> Export</a>
+  </div>
+</div>
+
+<!-- Filters --------------------------------------------------------------- -->
+<div class="filters">
+  <form method="get" action="/admin/register">
+    <input type="hidden" name="date" value="<%= date %>">
+    <label class="search" for="q">
+      <%- icon('search', 16) %>
+      <input id="q" type="text" name="q" value="<%= query.q || '' %>"
+             placeholder="Search employee" autocomplete="off">
+    </label>
+    <label class="chip" for="dept">
+      <%- icon('filter', 15) %>
+      <select id="dept" name="dept" onchange="this.form.submit()">
+        <option value="">All departments</option>
+        <% departments.forEach(function (d) { %>
+          <option value="<%= d.id %>" <%= departmentId === d.id ? 'selected' : '' %>><%= d.name %></option>
+        <% }); %>
+      </select>
+    </label>
+    <label class="chip" for="st">
+      <%- icon('upDown', 15) %>
+      <select id="st" name="status" onchange="this.form.submit()">
+        <option value="">Any status</option>
+        <% Object.keys(statuses).forEach(function (k) { %>
+          <% if (k === 'not_employed' || k === 'upcoming') return; %>
+          <option value="<%= k %>" <%= query.status === k ? 'selected' : '' %>><%= statuses[k] %></option>
+        <% }); %>
+      </select>
+    </label>
+    <% if (query.q || query.status || departmentId) { %>
+      <a class="chip" href="/admin/register?date=<%= date %>"><%- icon('x', 14) %> Clear</a>
+    <% } %>
+  </form>
+
+  <% if (isAdmin && date < today) { %>
+    <form method="post" action="/admin/register/close-open" style="margin-left:auto"
+          onsubmit="return confirm('Close every open check-in on this night at the shift end time?')">
+      <input type="hidden" name="_csrf" value="<%= csrf %>">
+      <input type="hidden" name="work_date" value="<%= date %>">
+      <button class="chip" type="submit"><%- icon('check', 14) %> Close open check-ins</button>
+    </form>
+  <% } %>
+</div>
+
+<!-- Summary --------------------------------------------------------------- -->
+<div class="card">
+  <div class="metrics">
+    <div class="metric is-ok"><div class="k">Present</div><div class="n"><%= reg.totals.present %></div></div>
+    <div class="metric <%= reg.totals.late ? 'is-warn' : '' %>"><div class="k">Late</div><div class="n"><%= reg.totals.late %></div></div>
+    <div class="metric"><div class="k">Half day</div><div class="n"><%= reg.totals.halfDay %></div></div>
+    <div class="metric <%= reg.totals.absent ? 'is-bad' : '' %>"><div class="k">Absent</div><div class="n"><%= reg.totals.absent %></div></div>
+    <div class="metric"><div class="k">Leave</div><div class="n"><%= reg.totals.leave %></div></div>
+    <div class="metric"><div class="k">Worked</div><div class="n" style="font-size:21px"><%= fmt.formatDuration(reg.totals.workedMinutes) %></div></div>
+    <div class="metric"><div class="k">Overtime</div><div class="n" style="font-size:21px"><%= fmt.formatDuration(reg.totals.overtimeMinutes) %></div></div>
+  </div>
+</div>
+
+<!-- Table ----------------------------------------------------------------- -->
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th><span class="th"><%- icon('user', 13) %> Employee</span></th>
+          <th><span class="th"><%- icon('clock', 13) %> Clock-in &amp; out</span></th>
+          <th><span class="th"><%- icon('upDown', 13) %> Status</span></th>
+          <th class="num">Overtime</th>
+          <th class="num">Late</th>
+          <th class="num">Early</th>
+          <th><span class="th"><%- icon('note', 13) %> Note</span></th>
+          <% if (isAdmin) { %><th></th><% } %>
+        </tr>
+      </thead>
+      <tbody>
+        <% let shown = 0; %>
+        <% reg.rows.forEach(function (r) { %>
+          <% if (r.status === 'not_employed') return; %>
+          <% shown++; %>
+          <tr class="<%= r.isOff ? 'is-off' : '' %>">
+            <td>
+              <a href="/employee/<%= r.employee.id %>">
+                <div class="person">
+                  <%- avatar(r.employee.name, r.employee.emp_code, 'sm') %>
+                  <div>
+                    <div class="nm"><%= r.employee.name %></div>
+                    <div class="id"><%= r.employee.emp_code %><%= r.employee.department_name ? ' · ' + r.employee.department_name : '' %></div>
+                  </div>
+                </div>
+              </a>
+            </td>
+            <td>
+              <%- include('../partials/punchline', { r: r }) %>
+              <% if (r.sessions.some(function (x) { return x.in && x.in.source === 'self'; })) { %>
+                <span class="pill weekly_off" style="margin-top:4px"
+                      title="Entered by the employee after the fact, not recorded live">
+                  self-reported
+                </span>
+              <% } %>
+            </td>
+            <td>
+              <span class="pill <%= r.inProgress ? 'in_progress' : r.status %>">
+                <% if (r.inProgress) { %><span class="dot beat"></span><% } %>
+                <%= r.statusLabel %>
+              </span>
+            </td>
+            <td class="num"><%= r.overtimeMinutes ? fmt.formatDuration(r.overtimeMinutes) : '—' %></td>
+            <td class="num <%= r.lateMinutes ? 'warn-text' : 'dim' %>"><%= r.lateMinutes ? fmt.formatDuration(r.lateMinutes) : '—' %></td>
+            <td class="num <%= r.earlyMinutes ? 'warn-text' : 'dim' %>"><%= r.earlyMinutes ? fmt.formatDuration(r.earlyMinutes) : '—' %></td>
+            <td class="dim" style="max-width:220px">
+              <%= r.note || '' %>
+              <% if (r.problems.length) { %>
+                <ul class="problems"><% r.problems.forEach(function (p) { %><li><%= p %></li><% }); %></ul>
+              <% } %>
+            </td>
+
+            <% if (isAdmin) { %>
+            <td class="num">
+              <details class="row-edit">
+                <summary><%- icon('edit', 14) %></summary>
+                <div class="panel-inline" style="text-align:left">
+
+                  <form method="post" action="/admin/register/punch" style="margin-bottom:12px">
+                    <input type="hidden" name="_csrf" value="<%= csrf %>">
+                    <input type="hidden" name="employee_id" value="<%= r.employee.id %>">
+                    <input type="hidden" name="work_date" value="<%= date %>">
+                    <div class="field-row">
+                      <div class="field">
+                        <label>Add punch</label>
+                        <select name="kind"><option value="in">Check in</option><option value="out">Check out</option></select>
+                      </div>
+                      <div class="field">
+                        <label>Time</label>
+                        <input type="time" name="time" required>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <label>Reason</label>
+                      <input type="text" name="note" placeholder="e.g. forgot to check out">
+                    </div>
+                    <button class="btn small primary" type="submit">Add punch</button>
+                  </form>
+
+                  <form method="post" action="/admin/register/override">
+                    <input type="hidden" name="_csrf" value="<%= csrf %>">
+                    <input type="hidden" name="employee_id" value="<%= r.employee.id %>">
+                    <input type="hidden" name="work_date" value="<%= date %>">
+                    <div class="field">
+                      <label>Mark whole night as</label>
+                      <select name="status">
+                        <option value="">— derive from punches —</option>
+                        <% Object.keys(statuses).forEach(function (k) { %>
+                          <% if (k === 'not_employed' || k === 'upcoming') return; %>
+                          <option value="<%= k %>"><%= statuses[k] %></option>
+                        <% }); %>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label>Note</label>
+                      <input type="text" name="note" placeholder="e.g. approved sick leave">
+                    </div>
+                    <button class="btn small" type="submit">Apply</button>
+                  </form>
+
+                  <% if (r.sessions.length) { %>
+                    <div style="margin-top:12px">
+                      <label>Recorded punches</label>
+                      <% r.sessions.forEach(function (s) { %>
+                        <div class="btn-row" style="margin-bottom:5px">
+                          <span class="dim" style="font-size:12.5px"><%= fmt.clockOf(s.in.punched_at) %> in</span>
+                          <form method="post" action="/admin/register/punch/<%= s.in.id %>/delete" class="inline-form">
+                            <input type="hidden" name="_csrf" value="<%= csrf %>">
+                            <button class="btn small danger" type="submit" title="Delete">&times;</button>
+                          </form>
+                          <% if (s.out) { %>
+                            <span class="dim" style="font-size:12.5px"><%= fmt.clockOf(s.out.punched_at) %> out</span>
+                            <form method="post" action="/admin/register/punch/<%= s.out.id %>/delete" class="inline-form">
+                              <input type="hidden" name="_csrf" value="<%= csrf %>">
+                              <button class="btn small danger" type="submit" title="Delete">&times;</button>
+                            </form>
+                          <% } %>
+                        </div>
+                      <% }); %>
+                    </div>
+                  <% } %>
+
+                </div>
+              </details>
+            </td>
+            <% } %>
+          </tr>
+        <% }); %>
+
+        <% if (!shown) { %>
+          <tr><td colspan="<%= isAdmin ? 8 : 7 %>" class="empty">
+            <p>Nobody matches that filter.</p>
+            <a class="btn small" href="/admin/register?date=<%= date %>">Clear filters</a>
+          </td></tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/foot') %>
