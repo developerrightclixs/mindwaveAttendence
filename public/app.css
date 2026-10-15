@@ -604,6 +604,10 @@ tr.is-today td { box-shadow: inset 2px 0 0 var(--brand); }
 .pill.not_employed { background: var(--mute-soft);  color: var(--text-faint); }
 .pill.upcoming     { background: var(--mute-soft);  color: var(--text-faint); }
 .pill.not_required { background: var(--mute-soft);  color: var(--text-faint); }
+/* Entered by the employee after the fact. Its own class, not a borrowed
+   one - this is a normal record, so it must never pick up a colour that
+   says something is wrong. */
+.pill.self-entered { background: var(--ok-soft);    color: var(--ok); }
 .pill.in_progress  { background: var(--brand-soft); color: var(--brand); }
 .pill.live         { background: var(--brand-soft); color: var(--brand); }
 

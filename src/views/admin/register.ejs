@@ -120,7 +120,7 @@
             <td>
               <%- include('../partials/punchline', { r: r }) %>
               <% if (r.sessions.some(function (x) { return x.in && x.in.source === 'self'; })) { %>
-                <span class="pill weekly_off" style="margin-top:4px"
+                <span class="pill self-entered" style="margin-top:4px"
                       title="Entered by the employee after the fact, not recorded live">
                   self-reported
                 </span>

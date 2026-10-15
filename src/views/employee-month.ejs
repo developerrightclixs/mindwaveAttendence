@@ -94,7 +94,7 @@
             <td>
               <%- include('partials/punchline', { r: d }) %>
               <% if (d.sessions.some(function (x) { return x.in && x.in.source === 'self'; })) { %>
-                <span class="pill weekly_off" title="Entered after the fact">self-reported</span>
+                <span class="pill self-entered" title="Entered after the fact">self-reported</span>
               <% } %>
             </td>
             <td class="num"><%= d.workedMinutes ? fmt.formatDuration(d.workedMinutes) : '—' %></td>
