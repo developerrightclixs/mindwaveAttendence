@@ -4,6 +4,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const express = require('express');
 const session = require('express-session');
+const cookieParser = require('cookie-parser');
 
 const { db, DB_PATH, getSetting, setSetting } = require('./db');
 const SqliteStore = require('./session-store');
@@ -42,6 +43,8 @@ app.set('views', path.join(__dirname, 'views'));
 app.set('trust proxy', 1);
 
 app.use(express.urlencoded({ extended: false, limit: '256kb' }));
+// Signed cookies carry the kiosk device unlock, which outlives a session.
+app.use(cookieParser(sessionSecret()));
 
 // ---------------------------------------------------------------------------
 // Static assets

@@ -22,7 +22,36 @@
 <div class="centered">
   <div class="panel kiosk-panel">
 
-    <% if (result) { %>
+    <% if (locked && needsSetup) { %>
+      <div class="brand-mark">M</div>
+      <h1>Kiosk not set up</h1>
+      <p class="kiosk-clock">
+        This app is reachable from the internet and no kiosk passphrase has been
+        set, so the kiosk is closed. An admin can set one in Setup.
+      </p>
+      <a class="btn primary big" href="/login">Sign in instead</a>
+
+    <% } else if (locked) { %>
+      <div class="brand-mark">M</div>
+      <h1>Kiosk locked</h1>
+      <p class="kiosk-clock">Unlock this device once to start taking punches.</p>
+
+      <% if (error) { %><div class="flash err"><span><%= error %></span></div><% } %>
+
+      <form method="post" action="/kiosk/unlock" autocomplete="off">
+        <input type="hidden" name="_csrf" value="<%= csrf %>">
+        <div class="field">
+          <label for="passphrase">Device passphrase</label>
+          <input id="passphrase" name="passphrase" type="password" required autofocus>
+        </div>
+        <button class="btn primary big" type="submit">Unlock this device</button>
+      </form>
+
+      <p class="sub" style="margin-top:18px">
+        Ask HR for the passphrase. You only need to do this once on this device.
+      </p>
+
+    <% } else if (result) { %>
       <div class="kiosk-result">
         <span class="pill <%= result.kind === 'in' ? 'present' : 'half_day' %>">
           <%= result.kind === 'in' ? 'Checked in' : 'Checked out' %>

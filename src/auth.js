@@ -1,6 +1,7 @@
 'use strict';
+const crypto = require('node:crypto');
 const bcrypt = require('bcryptjs');
-const { db } = require('./db');
+const { db, getSetting, setSetting, audit } = require('./db');
 const { getEmployeeByEmail, getEmployeeByCode } = require('./lib/service');
 
 const ROUNDS = 10;
@@ -40,6 +41,84 @@ function setPin(employeeId, pin) {
     throw Object.assign(new Error('PIN must be 4 to 8 digits'), { status: 400 });
   }
   db.prepare('UPDATE employees SET pin_hash = ? WHERE id = ?').run(hash(clean), employeeId);
+}
+
+// --- kiosk device lock ------------------------------------------------------
+
+/**
+ * The kiosk screen is deliberately unauthenticated - it is a shared device by
+ * the door. That is safe on an office LAN and NOT safe on the public
+ * internet, where the URL is a place to guess employee codes and PINs.
+ *
+ * A device passphrase closes that gap without spoiling the walk-up flow: the
+ * tablet is unlocked once, keeps a signed cookie, and staff still just tap a
+ * code and a PIN. The cookie carries a hash of the current passphrase, so
+ * changing it logs every device out at once.
+ */
+const KIOSK_COOKIE = 'mw.kiosk';
+
+function kioskPassphraseSet() {
+  return !!getSetting('kiosk_passphrase_hash', '');
+}
+
+function setKioskPassphrase(plain, actorId) {
+  const clean = String(plain || '').trim();
+  if (clean === '') {
+    setSetting('kiosk_passphrase_hash', '');
+    audit(actorId, 'kiosk.unlock_removed', null, 'kiosk left open');
+    return false;
+  }
+  if (clean.length < 6) {
+    throw Object.assign(new Error('The kiosk passphrase must be at least 6 characters'),
+      { status: 400 });
+  }
+  setSetting('kiosk_passphrase_hash', hash(clean));
+  audit(actorId, 'kiosk.passphrase_set', null, 'all kiosk devices must unlock again');
+  return true;
+}
+
+/** Token stored on the device; tied to the passphrase currently in force. */
+function kioskDeviceToken() {
+  const stored = getSetting('kiosk_passphrase_hash', '');
+  return crypto.createHash('sha256').update('kiosk:' + stored).digest('hex').slice(0, 32);
+}
+
+/**
+ * Whether this device may take punches.
+ *
+ * With no passphrase configured the kiosk is open, which is correct on an
+ * office LAN. On a public deployment that would be an open punch endpoint, and
+ * a fresh install has no passphrase yet - so when the app is running behind
+ * TLS (SECURE_COOKIES=1, i.e. it is on the internet) an unconfigured kiosk
+ * fails CLOSED rather than open. There is no window where a new deployment is
+ * publicly punchable.
+ */
+function kioskDeviceUnlocked(req) {
+  if (!kioskPassphraseSet()) return !isPublicDeployment();
+  const c = req.signedCookies && req.signedCookies[KIOSK_COOKIE];
+  return !!c && c === kioskDeviceToken();
+}
+
+const isPublicDeployment = () => process.env.SECURE_COOKIES === '1';
+
+/** True when the kiosk is shut because nobody has configured it yet. */
+function kioskNeedsSetup() {
+  return !kioskPassphraseSet() && isPublicDeployment();
+}
+
+function unlockKioskDevice(res, secure) {
+  res.cookie(KIOSK_COOKIE, kioskDeviceToken(), {
+    signed: true,
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: !!secure,
+    maxAge: 180 * 24 * 60 * 60 * 1000,             // a door tablet, not a session
+  });
+}
+
+function checkKioskPassphrase(plain) {
+  const stored = getSetting('kiosk_passphrase_hash', '');
+  return !!stored && verify(plain, stored);
 }
 
 // --- route guards ----------------------------------------------------------
@@ -99,4 +178,6 @@ function canViewEmployee(user, employeeId) {
 module.exports = {
   hash, verify, authenticate, authenticatePin, setPassword, setPin,
   loadUser, requireLogin, requireRole, canViewEmployee,
+  KIOSK_COOKIE, kioskPassphraseSet, setKioskPassphrase, kioskDeviceUnlocked,
+  unlockKioskDevice, checkKioskPassphrase, kioskNeedsSetup, isPublicDeployment,
 };

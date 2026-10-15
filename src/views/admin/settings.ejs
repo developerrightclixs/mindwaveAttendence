@@ -49,6 +49,44 @@
   </div>
 </div>
 
+<div class="card">
+  <div class="card-head">
+    <span class="chip-icon <%= kioskLocked ? 'ok' : 'bad' %>"><%- icon('shield', 15) %></span>
+    <h2>Kiosk device lock</h2>
+    <span class="spacer"></span>
+    <span class="pill <%= kioskLocked ? 'present' : 'absent' %>">
+      <%= kioskLocked ? 'locked' : 'OPEN TO ANYONE' %>
+    </span>
+  </div>
+  <div class="card-body">
+    <p class="sub" style="margin:0 0 14px">
+      The kiosk screen takes a code and a PIN from anyone who opens it &mdash;
+      which is the point on a shared tablet by the door, and a problem the
+      moment the app is reachable from the internet. Set a passphrase and each
+      device is unlocked once, then remembers for six months. Staff still just
+      tap their code and PIN. Changing the passphrase re-locks every device.
+      <% if (!kioskLocked) { %>
+        <br><strong class="bad-text">No passphrase is set. Do not expose this
+        app publicly until you set one, or disable the kiosk.</strong>
+      <% } %>
+    </p>
+    <% if (isAdmin) { %>
+      <form method="post" action="/admin/kiosk-lock">
+        <input type="hidden" name="_csrf" value="<%= csrf %>">
+        <div class="field" style="max-width:320px">
+          <label for="kioskpass">Passphrase</label>
+          <input id="kioskpass" type="text" name="passphrase" autocomplete="off"
+                 placeholder="<%= kioskLocked ? 'enter a new one to replace it' : 'at least 6 characters' %>">
+          <p class="hint">Leave blank and save to remove the lock entirely.</p>
+        </div>
+        <button class="btn <%= kioskLocked ? '' : 'primary' %>" type="submit">
+          <%= kioskLocked ? 'Replace / remove passphrase' : 'Lock the kiosk' %>
+        </button>
+      </form>
+    <% } %>
+  </div>
+</div>
+
 <div class="grid two">
 
   <!-- Departments ---------------------------------------------------------- -->

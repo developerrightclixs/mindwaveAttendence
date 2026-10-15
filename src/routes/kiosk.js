@@ -8,7 +8,10 @@
  * to enumerate staff. It must only be reachable on the office network.
  */
 const express = require('express');
-const { authenticatePin } = require('../auth');
+const {
+  authenticatePin, kioskPassphraseSet, kioskDeviceUnlocked,
+  unlockKioskDevice, checkKioskPassphrase, kioskNeedsSetup,
+} = require('../auth');
 const svc = require('../lib/service');
 const { prettyDate } = require('../lib/dates');
 
@@ -44,27 +47,43 @@ function throttleFail(code) {
   }
 }
 
-router.get('/', (req, res) => {
+// Device lock. When a passphrase is set, this tablet must be unlocked once
+// before anybody can punch from it - the difference between a shared screen
+// inside the office and an open punch endpoint on the internet.
+function render(res, extra) {
   res.render('kiosk', {
     title: 'Attendance kiosk',
     layout: false,
     error: null,
     result: null,
+    locked: false,
+    needsSetup: kioskNeedsSetup(),
     date: prettyDate(svc.currentBusinessDate()),
+    ...extra,
   });
+}
+
+router.use((req, res, next) => {
+  if (req.path === '/unlock' || kioskDeviceUnlocked(req)) return next();
+  return render(res, { locked: true });
 });
+
+router.post('/unlock', (req, res) => {
+  if (!kioskPassphraseSet()) return res.redirect('/kiosk');
+  if (!checkKioskPassphrase(req.body.passphrase)) {
+    return render(res, { locked: true, error: 'That passphrase is not right.' });
+  }
+  unlockKioskDevice(res, process.env.SECURE_COOKIES === '1');
+  res.redirect('/kiosk');
+});
+
+router.get('/', (req, res) => render(res, {}));
 
 router.post('/', (req, res) => {
   const code = String(req.body.emp_code || '').trim();
   const pin = String(req.body.pin || '').trim();
 
-  const show = (error, result) => res.render('kiosk', {
-    title: 'Attendance kiosk',
-    layout: false,
-    error,
-    result,
-    date: prettyDate(svc.currentBusinessDate()),
-  });
+  const show = (error, result) => render(res, { error, result });
 
   const locked = throttleCheck(code.toLowerCase());
   if (locked) return show(locked, null);

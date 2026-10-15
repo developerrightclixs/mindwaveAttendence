@@ -1,7 +1,9 @@
 'use strict';
 const express = require('express');
 const { db, audit } = require('../db');
-const { requireRole, setPassword, setPin } = require('../auth');
+const {
+  requireRole, setPassword, setPin, setKioskPassphrase, kioskPassphraseSet,
+} = require('../auth');
 const svc = require('../lib/service');
 const { isoDate, prettyDate, addDays } = require('../lib/dates');
 const importer = require('../lib/import');
@@ -485,6 +487,7 @@ router.get('/settings', (req, res) => {
   res.render('admin/settings', {
     title: 'Setup',
     selfEntry: svc.selfEntryWindow(),
+    kioskLocked: kioskPassphraseSet(),
     departments: svc.listDepartments(),
     holidays: svc.listHolidays(`${year}-01-01`, `${year}-12-31`),
     year,
@@ -554,6 +557,19 @@ router.post('/self-entry', adminOnly, (req, res) => {
   res.flash('ok', enabled
     ? `Manual entry open for nights from ${from} onwards.`
     : 'Manual entry closed.');
+  res.redirect('/admin/settings');
+});
+
+/** Set or clear the kiosk device passphrase. */
+router.post('/kiosk-lock', adminOnly, (req, res) => {
+  try {
+    const set = setKioskPassphrase(req.body.passphrase, req.user.id);
+    res.flash('ok', set
+      ? 'Kiosk passphrase set. Every kiosk device must be unlocked again.'
+      : 'Kiosk passphrase removed. The kiosk is open to anyone who can reach it.');
+  } catch (e) {
+    res.flash('err', e.message);
+  }
   res.redirect('/admin/settings');
 });
 

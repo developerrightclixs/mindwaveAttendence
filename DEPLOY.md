@@ -215,6 +215,79 @@ never left on screen for the next.
 
 ---
 
+## Putting it on the internet
+
+### Why not Vercel (or any serverless host)
+
+Vercel runs **stateless functions on a read-only filesystem**. This app is a
+single long-lived process that writes continuously to one SQLite file. Deployed
+there it fails immediately - `src/db.js` calls `mkdirSync` at startup and gets
+`EROFS`, so every route returns `FUNCTION_INVOCATION_FAILED`.
+
+Pointing `DB_PATH` at `/tmp` does not rescue it. `/tmp` is wiped between cold
+starts and is not shared between concurrent invocations, so the database would
+be recreated empty every few minutes and two simultaneous requests would see
+two different databases. An attendance system that silently forgets attendance
+is worse than one that is plainly down.
+
+Making it serverless-compatible means moving to hosted Postgres, and that is a
+rewrite rather than a port: 102 synchronous query sites and 5 transactions all
+become `async`, cascading through the service layer, every route, auth, the
+session store, the seeder, the importer and the backup script.
+
+**Use a host that runs a real process with a disk instead.** The code runs
+unchanged.
+
+### Railway, Render or Fly.io
+
+A `Dockerfile` and a `render.yaml` are in the repo. The one setting that
+matters on any of them is a **persistent volume mounted at `/data`** - without
+it, every deploy wipes your history.
+
+| Setting | Value |
+|---|---|
+| Volume mount path | `/data` |
+| `DB_PATH` | `/data/attendance.db` |
+| `SECURE_COOKIES` | `1` |
+| `HOST` | `0.0.0.0` |
+| `SESSION_SECRET` | a long random string, set once and kept |
+| Health check path | `/healthz` |
+
+Railway: new project from the repo, add a Volume mounted at `/data`, set the
+variables above. Render: point it at `render.yaml`; note a disk needs a paid
+instance type. Fly.io: `fly launch`, then `fly volumes create data`.
+
+All three terminate TLS for you, which is what `SECURE_COOKIES=1` requires.
+
+### Carry your existing data across
+
+A fresh volume is empty, so the app would start with no employees at all. Copy
+the database you already have up to the volume **before** the first real use:
+
+```powershell
+# with the service stopped locally, take a clean single-file copy
+npm run backup
+```
+
+Then upload that file to the volume as `/data/attendance.db` - Railway and Fly
+both give you a shell (`fly ssh console`, Railway's console) to drop it in.
+Skip this and you will be re-adding all eight staff, their PINs, departments,
+shift and settings by hand.
+
+### Lock the kiosk first
+
+`/kiosk` takes a code and a PIN from anyone who opens it. On a LAN that is the
+point; on a public URL it is an open punch endpoint. **Set a kiosk passphrase
+in Setup before the app is reachable publicly** - each device is then unlocked
+once and remembers for six months, and staff still just tap code and PIN.
+Setup shows a red warning while no passphrase is set.
+
+### Then delete the Vercel project
+
+Leave it up and you have a broken URL that staff may bookmark.
+
+---
+
 ## 7. First night checklist
 
 - [ ] Service running and survives a reboot (`/healthz` from another machine)
@@ -224,6 +297,7 @@ never left on screen for the next.
 - [ ] Kiosk device open on `/kiosk` and tested with one real punch
 - [ ] Backup task registered and one backup copied off the machine
 - [ ] HTTPS in place, `SECURE_COOKIES=1`
+- [ ] If public: kiosk passphrase set, volume mounted, database copied across
 - [ ] You know where `logs\service.log` is
 
 Then, the morning after the first night, open **Reports → Exceptions**. It

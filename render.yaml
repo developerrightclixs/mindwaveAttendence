@@ -1,0 +1,23 @@
+# Render blueprint. The disk is the part that matters: without it the SQLite
+# file lives on an ephemeral filesystem and every deploy wipes your attendance
+# history. A disk requires a paid instance type on Render.
+services:
+  - type: web
+    name: mindwave-attendance
+    runtime: docker
+    plan: starter
+    healthCheckPath: /healthz
+    disk:
+      name: attendance-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: DB_PATH
+        value: /data/attendance.db
+      - key: SECURE_COOKIES
+        value: "1"
+      - key: HOST
+        value: 0.0.0.0
+      # Generated once and kept, so sessions survive a redeploy.
+      - key: SESSION_SECRET
+        generateValue: true
