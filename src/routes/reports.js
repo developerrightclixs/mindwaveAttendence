@@ -44,14 +44,15 @@ router.get('/monthly', async (req, res) => {
   const rows = [];
   for (const e of employees) {
     const r = await svc.employeeDays(e.id, from, to);
-    rows.push({ employee: e, totals: r.totals });
+    rows.push({ employee: e, totals: r.totals, leave: await svc.leaveBalance(e.id, month) });
   }
 
   if (req.query.format === 'csv') {
     const out = [[
       'Employee code', 'Name', 'Department', 'Shift',
-      'Payable days', 'Present', 'Late', 'Half days', 'Absent', 'Leave',
-      'Holidays', 'Weekly offs',
+      'Payable days', 'Present', 'Late', 'Half days', 'Absent',
+      'Sick leave used', 'Casual leave used', 'Leave beyond allowance',
+      'Leave remaining', 'Holidays', 'Weekly offs',
       'Worked hours', 'Expected hours', 'Overtime hours',
       'Late minutes', 'Early-exit minutes', 'Days needing attention',
     ]];
@@ -60,7 +61,9 @@ router.get('/monthly', async (req, res) => {
         r.employee.emp_code, r.employee.name,
         r.employee.department_name || '', r.employee.shift_name || '',
         r.totals.payableDays, r.totals.present, r.totals.late, r.totals.halfDay,
-        r.totals.absent, r.totals.leave, r.totals.holiday, r.totals.weeklyOff,
+        r.totals.absent,
+        r.leave.used.sick, r.leave.used.casual, r.leave.extra, r.leave.totalLeft,
+        r.totals.holiday, r.totals.weeklyOff,
         hours(r.totals.workedMinutes), hours(r.totals.expectedMinutes),
         hours(r.totals.overtimeMinutes),
         r.totals.lateMinutes, r.totals.earlyMinutes, r.totals.problemDays,

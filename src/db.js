@@ -124,6 +124,13 @@ async function tx(fn) {
 
 // --- schema -----------------------------------------------------------------
 
+// Columns added after the first release. Applied on every boot; ADD COLUMN
+// IF NOT EXISTS makes that a no-op once present.
+const COLUMN_MIGRATIONS = [
+  ['day_overrides', 'leave_type',
+    "TEXT CHECK (leave_type IS NULL OR leave_type IN ('sick','casual'))"],
+];
+
 let ready = null;
 
 /**
@@ -140,6 +147,12 @@ function init() {
       }
       const sql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
       await pool.query(sql);
+      // CREATE TABLE IF NOT EXISTS never adds a column to a table that already
+      // exists, so additive changes need applying separately.
+      for (const [table, column, decl] of COLUMN_MIGRATIONS) {
+        await pool.query(
+          `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${decl}`);
+      }
     })().catch((e) => {
       ready = null;              // let the next request retry rather than wedge
       throw e;

@@ -92,6 +92,7 @@
           <th class="num">Overtime</th>
           <th class="num">Late</th>
           <th class="num">Early</th>
+          <th class="num"><span class="th">Leave left</span></th>
           <th><span class="th"><%- icon('note', 13) %> Note</span></th>
           <% if (isAdmin) { %><th></th><% } %>
         </tr>
@@ -131,6 +132,16 @@
             <td class="num"><%= r.overtimeMinutes ? fmt.formatDuration(r.overtimeMinutes) : '—' %></td>
             <td class="num <%= r.lateMinutes ? 'warn-text' : 'dim' %>"><%= r.lateMinutes ? fmt.formatDuration(r.lateMinutes) : '—' %></td>
             <td class="num <%= r.earlyMinutes ? 'warn-text' : 'dim' %>"><%= r.earlyMinutes ? fmt.formatDuration(r.earlyMinutes) : '—' %></td>
+            <td class="num">
+              <% var lb = leave.get(r.employee.id); %>
+              <% if (lb) { %>
+                <span class="pill <%= lb.totalLeft === 0 ? 'absent' : (lb.totalLeft === 1 ? 'late' : 'present') %>"
+                      title="Sick <%= lb.left.sick %>/<%= lb.allowance.sick %>, casual <%= lb.left.casual %>/<%= lb.allowance.casual %> this month">
+                  <%= lb.totalLeft %>/<%= lb.totalAllowed %>
+                </span>
+                <% if (lb.extra) { %><br><span class="bad-text" style="font-size:11px">+<%= lb.extra %> extra</span><% } %>
+              <% } else { %><span class="dim">—</span><% } %>
+            </td>
             <td class="dim" style="max-width:220px">
               <%= r.note || '' %>
               <% if (r.problems.length) { %>
@@ -179,6 +190,24 @@
                         <% }); %>
                       </select>
                     </div>
+                    <% var bal = leave.get(r.employee.id); %>
+                    <div class="field">
+                      <label>If leave, which kind</label>
+                      <select name="leave_type">
+                        <option value="">— not from the allowance —</option>
+                        <option value="sick" <%= bal && !bal.left.sick ? 'disabled' : '' %>>
+                          Sick<%= bal ? ' (' + bal.left.sick + ' of ' + bal.allowance.sick + ' left)' : '' %>
+                        </option>
+                        <option value="casual" <%= bal && !bal.left.casual ? 'disabled' : '' %>>
+                          Casual<%= bal ? ' (' + bal.left.casual + ' of ' + bal.allowance.casual + ' left)' : '' %>
+                        </option>
+                      </select>
+                      <% if (bal && bal.totalLeft === 0) { %>
+                        <p class="hint bad-text">
+                          No leave left this month. Marking another counts as extra.
+                        </p>
+                      <% } %>
+                    </div>
                     <div class="field">
                       <label>Note</label>
                       <input type="text" name="note" placeholder="e.g. approved sick leave">
@@ -216,7 +245,7 @@
         <% }); %>
 
         <% if (!shown) { %>
-          <tr><td colspan="<%= isAdmin ? 8 : 7 %>" class="empty">
+          <tr><td colspan="<%= isAdmin ? 9 : 8 %>" class="empty">
             <p>Nobody matches that filter.</p>
             <a class="btn small" href="/admin/register?date=<%= date %>">Clear filters</a>
           </td></tr>

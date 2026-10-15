@@ -24,6 +24,7 @@ router.get('/', requireLogin, async (req, res) => {
     days: [...mine.days].filter((d) => d.date <= workDate).reverse(),
     totals: mine.totals,
     employee: mine.employee,
+    leave: await svc.leaveBalance(req.user.id, workDate),
     selfEntryOpen: (await svc.selfEntryWindow()).enabled,
     month: from,
   });
@@ -105,6 +106,7 @@ router.get('/employee/:id', requireLogin, async (req, res, next) => {
   res.render('employee-month', {
     title: `${data.employee.name} - attendance`,
     data,
+    leave: await svc.leaveBalance(id, month),
     from,
     to,
     prevMonth: addDays(from, -1),

@@ -48,7 +48,8 @@
           <th class="num">Late</th>
           <th class="num">Half</th>
           <th class="num">Absent</th>
-          <th class="num">Leave</th>
+          <th class="num">Leave used</th>
+          <th class="num">Leave left</th>
           <th class="num">Worked</th>
           <th class="num">Expected</th>
           <th class="num">Overtime</th>
@@ -76,7 +77,16 @@
             <td class="num <%= r.totals.late ? 'warn-text' : 'dim' %>"><%= r.totals.late %></td>
             <td class="num"><%= r.totals.halfDay %></td>
             <td class="num <%= r.totals.absent ? 'bad-text' : 'dim' %>"><%= r.totals.absent %></td>
-            <td class="num"><%= r.totals.leave %></td>
+            <td class="num">
+              <%= r.leave.used.sick + r.leave.used.casual + r.leave.used.untyped %>
+              <% if (r.leave.extra) { %><span class="bad-text" style="font-size:11px"> +<%= r.leave.extra %></span><% } %>
+            </td>
+            <td class="num">
+              <span class="pill <%= r.leave.totalLeft === 0 ? 'absent' : (r.leave.totalLeft === 1 ? 'late' : 'present') %>"
+                    title="Sick <%= r.leave.left.sick %>/<%= r.leave.allowance.sick %>, casual <%= r.leave.left.casual %>/<%= r.leave.allowance.casual %>">
+                <%= r.leave.totalLeft %>/<%= r.leave.totalAllowed %>
+              </span>
+            </td>
             <td class="num"><%= fmt.formatDuration(r.totals.workedMinutes) %></td>
             <td class="num dim"><%= fmt.formatDuration(r.totals.expectedMinutes) %></td>
             <td class="num"><%= r.totals.overtimeMinutes ? fmt.formatDuration(r.totals.overtimeMinutes) : '—' %></td>
@@ -92,7 +102,7 @@
           </tr>
         <% }); %>
         <% if (!rows.length) { %>
-          <tr><td colspan="13" class="empty">No employees match that filter.</td></tr>
+          <tr><td colspan="14" class="empty">No employees match that filter.</td></tr>
         <% } %>
       </tbody>
       <% if (rows.length) { %>
@@ -104,7 +114,8 @@
             <td class="num"><%= rows.reduce(function (s, r) { return s + r.totals.late; }, 0) %></td>
             <td class="num"><%= rows.reduce(function (s, r) { return s + r.totals.halfDay; }, 0) %></td>
             <td class="num"><%= rows.reduce(function (s, r) { return s + r.totals.absent; }, 0) %></td>
-            <td class="num"><%= rows.reduce(function (s, r) { return s + r.totals.leave; }, 0) %></td>
+            <td class="num"><%= rows.reduce(function (s, r) { return s + r.leave.totalUsed; }, 0) %></td>
+            <td class="num"><%= rows.reduce(function (s, r) { return s + r.leave.totalLeft; }, 0) %></td>
             <td class="num"><%= fmt.formatDuration(rows.reduce(function (s, r) { return s + r.totals.workedMinutes; }, 0)) %></td>
             <td class="num"><%= fmt.formatDuration(rows.reduce(function (s, r) { return s + r.totals.expectedMinutes; }, 0)) %></td>
             <td class="num"><%= fmt.formatDuration(rows.reduce(function (s, r) { return s + r.totals.overtimeMinutes; }, 0)) %></td>

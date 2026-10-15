@@ -223,3 +223,95 @@ test('a failure partway through writes neither punch', async () => {
 test.after(async () => {
   await require('../db').pool.end().catch(() => {});
 });
+
+// --- leave entitlement -----------------------------------------------------
+
+const clearLeave = () => run('DELETE FROM day_overrides WHERE employee_id = ?', empId);
+
+test('a fresh month starts with the full allowance', async () => {
+  await clearLeave();
+  const b = await svc.leaveBalance(empId, '2026-11-15');
+  assert.equal(b.allowance.sick, 1);
+  assert.equal(b.allowance.casual, 1);
+  assert.equal(b.totalLeft, 2);
+  assert.equal(b.totalUsed, 0);
+});
+
+test('one sick day leaves the casual day untouched', async () => {
+  await clearLeave();
+  await svc.setOverride({
+    employeeId: empId, workDate: '2026-11-03', status: 'leave',
+    leaveType: 'sick', note: 'flu', actorId: empId,
+  });
+  const b = await svc.leaveBalance(empId, '2026-11-15');
+  assert.equal(b.used.sick, 1);
+  assert.equal(b.left.sick, 0);
+  assert.equal(b.left.casual, 1);
+  assert.equal(b.totalLeft, 1);
+});
+
+test('using both leaves nothing remaining', async () => {
+  await clearLeave();
+  for (const [date, type] of [['2026-11-03', 'sick'], ['2026-11-04', 'casual']]) {
+    await svc.setOverride({
+      employeeId: empId, workDate: date, status: 'leave',
+      leaveType: type, actorId: empId,
+    });
+  }
+  const b = await svc.leaveBalance(empId, '2026-11-15');
+  assert.equal(b.totalUsed, 2);
+  assert.equal(b.totalLeft, 0);
+  assert.equal(b.extra, 0);
+});
+
+test('a third leave day is reported as beyond the allowance, not hidden', async () => {
+  await clearLeave();
+  for (const [date, type] of [['2026-11-03', 'sick'], ['2026-11-04', 'casual'],
+    ['2026-11-05', 'sick']]) {
+    await svc.setOverride({
+      employeeId: empId, workDate: date, status: 'leave',
+      leaveType: type, actorId: empId,
+    });
+  }
+  const b = await svc.leaveBalance(empId, '2026-11-15');
+  assert.equal(b.used.sick, 2);
+  assert.equal(b.totalLeft, 0);
+  assert.equal(b.extra, 1);          // surfaced for payroll to decide on
+});
+
+test('leave with no type counts as beyond the allowance', async () => {
+  await clearLeave();
+  await svc.setOverride({
+    employeeId: empId, workDate: '2026-11-06', status: 'leave', actorId: empId,
+  });
+  const b = await svc.leaveBalance(empId, '2026-11-15');
+  assert.equal(b.used.untyped, 1);
+  assert.equal(b.totalLeft, 2);      // the entitlement itself is untouched
+  assert.equal(b.extra, 1);
+});
+
+test('the allowance does not carry across months', async () => {
+  await clearLeave();
+  await svc.setOverride({
+    employeeId: empId, workDate: '2026-11-03', status: 'leave',
+    leaveType: 'sick', actorId: empId,
+  });
+  assert.equal((await svc.leaveBalance(empId, '2026-11-15')).totalLeft, 1);
+  // December is a fresh month and knows nothing of November.
+  assert.equal((await svc.leaveBalance(empId, '2026-12-15')).totalLeft, 2);
+});
+
+test('a leave type is ignored on a day that is not leave', async () => {
+  await clearLeave();
+  await svc.setOverride({
+    employeeId: empId, workDate: '2026-11-07', status: 'absent',
+    leaveType: 'sick', actorId: empId,
+  });
+  const row = await one(
+    'SELECT status, leave_type FROM day_overrides WHERE employee_id = ? AND work_date = ?',
+    empId, '2026-11-07');
+  assert.equal(row.status, 'absent');
+  assert.equal(row.leave_type, null);
+  assert.equal((await svc.leaveBalance(empId, '2026-11-15')).totalLeft, 2);
+  await clearLeave();
+});

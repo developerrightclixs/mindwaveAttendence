@@ -87,6 +87,41 @@
   </div>
 </div>
 
+<div class="card">
+  <div class="card-head">
+    <span class="chip-icon info"><%- icon('calendar', 15) %></span>
+    <h2>Leave allowance</h2>
+    <span class="spacer"></span>
+    <span class="pill leave"><%= leaveAllowance.sick + leaveAllowance.casual %> per month</span>
+  </div>
+  <div class="card-body">
+    <p class="sub" style="margin:0 0 14px">
+      What each employee gets per calendar month. It does not carry over - a new
+      month starts fresh. Leave marked beyond the allowance still records, and is
+      reported separately as <strong>beyond allowance</strong> so payroll can
+      decide what to do with it rather than have the system guess.
+    </p>
+    <% if (isAdmin) { %>
+      <form method="post" action="/admin/leave-allowance">
+        <input type="hidden" name="_csrf" value="<%= csrf %>">
+        <div class="field-row" style="max-width:360px">
+          <div class="field">
+            <label for="sick">Sick days</label>
+            <input id="sick" type="number" name="sick" min="0" max="31"
+                   value="<%= leaveAllowance.sick %>">
+          </div>
+          <div class="field">
+            <label for="casual">Casual days</label>
+            <input id="casual" type="number" name="casual" min="0" max="31"
+                   value="<%= leaveAllowance.casual %>">
+          </div>
+        </div>
+        <button class="btn" type="submit">Save allowance</button>
+      </form>
+    <% } %>
+  </div>
+</div>
+
 <div class="grid two">
 
   <!-- Departments ---------------------------------------------------------- -->

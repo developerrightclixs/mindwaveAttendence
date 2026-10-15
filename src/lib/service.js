@@ -218,7 +218,11 @@ async function deletePunch(punchId, actorId) {
   return row;
 }
 
-async function setOverride({ employeeId, workDate, status, note, actorId }) {
+async function setOverride({ employeeId, workDate, status, note, actorId,
+                             leaveType = null }) {
+  // A type only means something on a leave day; anything else clears it.
+  const type = status === 'leave' && ['sick', 'casual'].includes(leaveType)
+    ? leaveType : null;
   if (!status) {
     await run('DELETE FROM day_overrides WHERE employee_id = ? AND work_date = ?',
       employeeId, workDate);
@@ -226,15 +230,17 @@ async function setOverride({ employeeId, workDate, status, note, actorId }) {
     return null;
   }
   await run(
-    `INSERT INTO day_overrides (employee_id, work_date, status, note, set_by, set_at)
-     VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO day_overrides
+       (employee_id, work_date, status, leave_type, note, set_by, set_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (employee_id, work_date) DO UPDATE SET
-       status = EXCLUDED.status, note = EXCLUDED.note,
+       status = EXCLUDED.status, leave_type = EXCLUDED.leave_type,
+       note = EXCLUDED.note,
        set_by = EXCLUDED.set_by, set_at = EXCLUDED.set_at`,
-    employeeId, workDate, status, note || null, actorId, nowStamp());
+    employeeId, workDate, status, type, note || null, actorId, nowStamp());
   await audit(actorId, 'override.set', `employee:${employeeId}`,
-    `${workDate} -> ${status}${note ? ' - ' + note : ''}`);
-  return { employeeId, workDate, status };
+    `${workDate} -> ${status}${type ? ' (' + type + ')' : ''}${note ? ' - ' + note : ''}`);
+  return { employeeId, workDate, status, leaveType: type };
 }
 
 // --- derived views ---------------------------------------------------------
@@ -404,6 +410,85 @@ async function dashboard(date = null) {
     rows: now.rows,
     problems: now.rows.filter((r) => r.problems.length),
   };
+}
+
+// --- leave entitlement ------------------------------------------------------
+
+/**
+ * The monthly allowance. One sick day and one casual day each, which do not
+ * carry over - a fresh month starts fresh.
+ *
+ * Kept as settings so the figures can change without a release, but read
+ * through here so every screen agrees on what the allowance is.
+ */
+async function leaveAllowance() {
+  const [sick, casual] = await Promise.all([
+    getSetting('leave_sick_per_month', '1'),
+    getSetting('leave_casual_per_month', '1'),
+  ]);
+  return { sick: Number(sick), casual: Number(casual) };
+}
+
+async function setLeaveAllowance({ sick, casual }, actorId) {
+  await setSetting('leave_sick_per_month', Math.max(0, Number(sick) || 0));
+  await setSetting('leave_casual_per_month', Math.max(0, Number(casual) || 0));
+  await audit(actorId, 'settings.leave_allowance', null,
+    `sick ${sick}, casual ${casual} per month`);
+  return leaveAllowance();
+}
+
+/**
+ * How much leave one employee has used and has left in a given month.
+ *
+ * `extra` counts leave days taken beyond the allowance, including any marked
+ * without a type. They are reported rather than silently absorbed: going over
+ * is a payroll decision, not something this system should quietly swallow.
+ */
+async function leaveBalance(employeeId, anyDateInMonth) {
+  const { from, to } = monthBounds(anyDateInMonth);
+  const allowance = await leaveAllowance();
+
+  const rows = await all(
+    `SELECT leave_type, work_date FROM day_overrides
+     WHERE employee_id = ? AND status = 'leave' AND work_date BETWEEN ? AND ?
+     ORDER BY work_date`, employeeId, from, to);
+
+  const used = { sick: 0, casual: 0, untyped: 0 };
+  for (const r of rows) {
+    if (r.leave_type === 'sick') used.sick += 1;
+    else if (r.leave_type === 'casual') used.casual += 1;
+    else used.untyped += 1;
+  }
+
+  const left = {
+    sick: Math.max(0, allowance.sick - used.sick),
+    casual: Math.max(0, allowance.casual - used.casual),
+  };
+  const overSick = Math.max(0, used.sick - allowance.sick);
+  const overCasual = Math.max(0, used.casual - allowance.casual);
+
+  return {
+    month: from,
+    allowance,
+    used,
+    left,
+    totalAllowed: allowance.sick + allowance.casual,
+    totalUsed: used.sick + used.casual + used.untyped,
+    totalLeft: left.sick + left.casual,
+    // Anything taken beyond the entitlement, for HR to decide about.
+    extra: overSick + overCasual + used.untyped,
+    days: rows,
+  };
+}
+
+/** Balances for everyone, for the monthly report. */
+async function leaveBalances(anyDateInMonth, { departmentId = null } = {}) {
+  const employees = await listEmployees({ departmentId });
+  const out = new Map();
+  for (const e of employees) {
+    out.set(e.id, await leaveBalance(e.id, anyDateInMonth));
+  }
+  return out;
 }
 
 // --- employee self-entry of past timings ------------------------------------
@@ -596,4 +681,5 @@ module.exports = {
   selfEntryWindow, setSelfEntryWindow, selfEntryBlocker,
   recordSelfEntry, selfEntryNights,
   applyImport, existingIdentifiers,
+  leaveAllowance, setLeaveAllowance, leaveBalance, leaveBalances,
 };

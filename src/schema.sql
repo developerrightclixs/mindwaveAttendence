@@ -93,6 +93,9 @@ CREATE TABLE IF NOT EXISTS day_overrides (
   work_date    TEXT    NOT NULL,
   status       TEXT    NOT NULL CHECK (status IN
                  ('present','late','half_day','absent','leave','holiday','weekly_off')),
+  -- Which entitlement a leave day draws on. Only meaningful when status is
+  -- 'leave'; NULL there means leave taken outside the monthly allowance.
+  leave_type   TEXT    CHECK (leave_type IS NULL OR leave_type IN ('sick','casual')),
   note         TEXT,
   set_by       INTEGER REFERENCES employees(id) ON DELETE SET NULL,
   set_at       TEXT    NOT NULL,

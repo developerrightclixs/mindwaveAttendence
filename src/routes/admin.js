@@ -57,6 +57,7 @@ router.get('/register', async (req, res) => {
 
   res.render('admin/register', {
     title: 'Daily register',
+    leave: await svc.leaveBalances(date, { departmentId }),
     reg,
     date,
     prettyDay: prettyDate(date),
@@ -80,6 +81,7 @@ router.post('/register/override', adminOnly, async (req, res) => {
     employeeId: asInt(employeeId),
     workDate,
     status: clean,
+    leaveType: req.body.leave_type || null,
     note,
     actorId: req.user.id,
   });
@@ -503,6 +505,7 @@ router.get('/settings', async (req, res) => {
   res.render('admin/settings', {
     title: 'Setup',
     selfEntry: await svc.selfEntryWindow(),
+    leaveAllowance: await svc.leaveAllowance(),
     kioskLocked: await kioskPassphraseSet(),
     departments: await svc.listDepartments(),
     holidays: await svc.listHolidays(`${year}-01-01`, `${year}-12-31`),
@@ -588,6 +591,19 @@ router.post('/kiosk-lock', adminOnly, async (req, res) => {
     res.flash('err', e.message);
   }
   res.redirect('/admin/settings');
+});
+
+/** Change the monthly leave entitlement. */
+router.post('/leave-allowance', adminOnly, (req, res) => {
+  svc.setLeaveAllowance(
+    { sick: req.body.sick, casual: req.body.casual }, req.user.id,
+  ).then((a) => {
+    res.flash('ok', `Allowance set to ${a.sick} sick and ${a.casual} casual per month.`);
+    res.redirect('/admin/settings');
+  }).catch((e) => {
+    res.flash('err', e.message);
+    res.redirect('/admin/settings');
+  });
 });
 
 // ---------------------------------------------------------------------------

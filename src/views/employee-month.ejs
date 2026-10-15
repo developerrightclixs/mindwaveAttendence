@@ -26,6 +26,42 @@
   <div class="stat info"><div class="n"><%= fmt.formatDuration(data.totals.overtimeMinutes) %></div><div class="k">Overtime</div></div>
 </div>
 
+<!-- Leave allowance -------------------------------------------------------- -->
+<div class="card">
+  <div class="card-head">
+    <span class="chip-icon <%= leave.totalLeft ? 'info' : 'bad' %>"><%- icon('calendar', 15) %></span>
+    <h2>Leave this month</h2>
+    <span class="spacer"></span>
+    <span class="pill <%= leave.totalLeft === 0 ? 'absent' : (leave.totalLeft === 1 ? 'late' : 'present') %>">
+      <%= leave.totalLeft %> of <%= leave.totalAllowed %> left
+    </span>
+  </div>
+  <div class="metrics">
+    <div class="metric <%= leave.left.sick ? '' : 'is-bad' %>">
+      <div class="k">Sick leave</div>
+      <div class="n"><%= leave.left.sick %><span style="font-size:15px">/<%= leave.allowance.sick %></span></div>
+      <div class="d"><%= leave.used.sick %> used</div>
+    </div>
+    <div class="metric <%= leave.left.casual ? '' : 'is-bad' %>">
+      <div class="k">Casual leave</div>
+      <div class="n"><%= leave.left.casual %><span style="font-size:15px">/<%= leave.allowance.casual %></span></div>
+      <div class="d"><%= leave.used.casual %> used</div>
+    </div>
+    <div class="metric <%= leave.extra ? 'is-bad' : '' %>">
+      <div class="k">Beyond allowance</div>
+      <div class="n"><%= leave.extra %></div>
+      <div class="d"><%= leave.extra ? 'not covered by the allowance' : 'none' %></div>
+    </div>
+  </div>
+  <% if (leave.days.length) { %>
+    <div class="card-body" style="border-top:1px solid var(--border)">
+      <p class="sub" style="margin:0">
+        <% leave.days.forEach(function (d, i) { %><%= i ? ' · ' : '' %><%= fmt.prettyDate(d.work_date).replace(/,\s*\d{4}$/, '') %><%= d.leave_type ? ' (' + d.leave_type + ')' : ' (not from allowance)' %><% }); %>
+      </p>
+    </div>
+  <% } %>
+</div>
+
 <div class="card">
   <div class="card-head">
     <h2>Day by day</h2>
