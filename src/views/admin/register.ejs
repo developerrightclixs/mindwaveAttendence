@@ -47,7 +47,7 @@
       <select id="st" name="status" onchange="this.form.submit()">
         <option value="">Any status</option>
         <% Object.keys(statuses).forEach(function (k) { %>
-          <% if (k === 'not_employed' || k === 'upcoming') return; %>
+          <% if (['not_employed', 'upcoming', 'not_required'].includes(k)) return; %>
           <option value="<%= k %>" <%= query.status === k ? 'selected' : '' %>><%= statuses[k] %></option>
         <% }); %>
       </select>
@@ -188,7 +188,7 @@
                       <select name="status">
                         <option value="">— derive from punches —</option>
                         <% Object.keys(statuses).forEach(function (k) { %>
-                          <% if (k === 'not_employed' || k === 'upcoming') return; %>
+                          <% if (['not_employed', 'upcoming', 'not_required'].includes(k)) return; %>
                           <option value="<%= k %>"><%= statuses[k] %></option>
                         <% }); %>
                       </select>
