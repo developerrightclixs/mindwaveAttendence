@@ -217,76 +217,65 @@ never left on screen for the next.
 
 ## Putting it on the internet
 
-### Why not Vercel (or any serverless host)
+The store is **Supabase (PostgreSQL)**, so the app no longer needs a disk and
+runs on a serverless host.
 
-Vercel runs **stateless functions on a read-only filesystem**. This app is a
-single long-lived process that writes continuously to one SQLite file. Deployed
-there it fails immediately - `src/db.js` calls `mkdirSync` at startup and gets
-`EROFS`, so every route returns `FUNCTION_INVOCATION_FAILED`.
+### 1. Create the database
 
-Pointing `DB_PATH` at `/tmp` does not rescue it. `/tmp` is wiped between cold
-starts and is not shared between concurrent invocations, so the database would
-be recreated empty every few minutes and two simultaneous requests would see
-two different databases. An attendance system that silently forgets attendance
-is worse than one that is plainly down.
+In Supabase: new project, then **Project Settings -> Database -> Connection
+string**. Copy the **Transaction pooler** URI for Vercel (it is built for many
+short-lived connections); the Session pooler URI suits a long-running server.
 
-Making it serverless-compatible means moving to hosted Postgres, and that is a
-rewrite rather than a port: 102 synchronous query sites and 5 transactions all
-become `async`, cascading through the service layer, every route, auth, the
-session store, the seeder, the importer and the backup script.
+The schema creates itself on first connection - every statement is
+`IF NOT EXISTS`, so there is no migration step to run or forget.
 
-**Use a host that runs a real process with a disk instead.** The code runs
-unchanged.
+### 2. Deploy to Vercel
 
-### Railway, Render or Fly.io
+`vercel.json` and `api/index.js` are in the repo. Vercel serves `/public`
+directly and routes everything else to the Express app.
 
-A `Dockerfile` and a `render.yaml` are in the repo. The one setting that
-matters on any of them is a **persistent volume mounted at `/data`** - without
-it, every deploy wipes your history.
+Set these environment variables in the Vercel dashboard:
 
-| Setting | Value |
+| Variable | Value |
 |---|---|
-| Volume mount path | `/data` |
-| `DB_PATH` | `/data/attendance.db` |
-| `SECURE_COOKIES` | `1` |
-| `HOST` | `0.0.0.0` |
+| `DATABASE_URL` | the Supabase Transaction pooler URI |
 | `SESSION_SECRET` | a long random string, set once and kept |
-| Health check path | `/healthz` |
+| `SECURE_COOKIES` | `1` |
 
-Railway: new project from the repo, add a Volume mounted at `/data`, set the
-variables above. Render: point it at `render.yaml`; note a disk needs a paid
-instance type. Fly.io: `fly launch`, then `fly volumes create data`.
+`SESSION_SECRET` matters more here than it looks: without it the app generates
+one and stores it in the database, which works, but setting it explicitly means
+a redeploy never signs everyone out.
 
-All three terminate TLS for you, which is what `SECURE_COOKIES=1` requires.
+### 3. Seed the first admin
 
-### Carry your existing data across
+Run it once from your machine, pointed at the same database:
 
-A fresh volume is empty, so the app would start with no employees at all. Copy
-the database you already have up to the volume **before** the first real use:
-
-```powershell
-# with the service stopped locally, take a clean single-file copy
-npm run backup
+```bash
+DATABASE_URL="postgresql://..." npm run seed
 ```
 
-Then upload that file to the volume as `/data/attendance.db` - Railway and Fly
-both give you a shell (`fly ssh console`, Railway's console) to drop it in.
-Skip this and you will be re-adding all eight staff, their PINs, departments,
-shift and settings by hand.
+It prints the admin password once. Sign in, create your own named admin, then
+delete the seed account so the audit trail carries real names.
 
-### Lock the kiosk first
+### 4. Lock the kiosk before anyone finds the URL
 
-`/kiosk` takes a code and a PIN from anyone who opens it. On a LAN that is the
-point; on a public URL it is an open punch endpoint. **Set a kiosk passphrase
-in Setup before the app is reachable publicly** - each device is then unlocked
-once and remembers for six months, and staff still just tap code and PIN.
-Setup shows a red warning while no passphrase is set.
+`/kiosk` takes an employee code and PIN from whoever opens it. With
+`SECURE_COOKIES=1` the kiosk **fails closed** until a passphrase is set, so a
+fresh deployment is never publicly punchable - but set one in Setup before you
+hand the URL out, or the kiosk simply will not work.
 
-### Then delete the Vercel project
+### Backups
 
-Leave it up and you have a broken URL that staff may bookmark.
+Supabase takes its own, and that is the disaster-recovery plan. `npm run
+export` additionally dumps every table to JSON for an off-platform copy or a
+move between projects. That file contains password and PIN hashes - treat it
+like a password.
 
----
+### A note on the free tier
+
+Supabase pauses a project after a week with no activity. For a system used
+every night that will not happen, but the first request after a long holiday
+shutdown will be slow while it wakes.
 
 ## 7. First night checklist
 
@@ -297,7 +286,8 @@ Leave it up and you have a broken URL that staff may bookmark.
 - [ ] Kiosk device open on `/kiosk` and tested with one real punch
 - [ ] Backup task registered and one backup copied off the machine
 - [ ] HTTPS in place, `SECURE_COOKIES=1`
-- [ ] If public: kiosk passphrase set, volume mounted, database copied across
+- [ ] If public: `DATABASE_URL`, `SESSION_SECRET` and `SECURE_COOKIES=1` set
+- [ ] If public: kiosk passphrase set in Setup
 - [ ] You know where `logs\service.log` is
 
 Then, the morning after the first night, open **Reports → Exceptions**. It

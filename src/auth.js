@@ -1,7 +1,7 @@
 'use strict';
 const crypto = require('node:crypto');
 const bcrypt = require('bcryptjs');
-const { db, getSetting, setSetting, audit } = require('./db');
+const { one, run, getSetting, setSetting, audit } = require('./db');
 const { getEmployeeByEmail, getEmployeeByCode } = require('./lib/service');
 
 const ROUNDS = 10;
@@ -10,8 +10,8 @@ const hash = (plain) => bcrypt.hashSync(String(plain), ROUNDS);
 const verify = (plain, stored) => !!stored && bcrypt.compareSync(String(plain), stored);
 
 /** Validate an email + password login. Returns the employee row or null. */
-function authenticate(email, password) {
-  const emp = getEmployeeByEmail(String(email || '').trim());
+async function authenticate(email, password) {
+  const emp = await getEmployeeByEmail(String(email || '').trim());
   if (!emp || !emp.active || !emp.password_hash) return null;
   return verify(password, emp.password_hash) ? emp : null;
 }
@@ -20,27 +20,28 @@ function authenticate(email, password) {
  * Validate a kiosk code + PIN. Employee code is public (it is on the badge),
  * so the PIN is the only secret and is stored hashed like a password.
  */
-function authenticatePin(empCode, pin) {
-  const emp = getEmployeeByCode(String(empCode || '').trim());
+async function authenticatePin(empCode, pin) {
+  const emp = await getEmployeeByCode(String(empCode || '').trim());
   if (!emp || !emp.active || !emp.pin_hash) return null;
   return verify(pin, emp.pin_hash) ? emp : null;
 }
 
-function setPassword(employeeId, plain) {
-  db.prepare('UPDATE employees SET password_hash = ? WHERE id = ?')
-    .run(hash(plain), employeeId);
+// `q` lets these run inside a caller's transaction (the bulk importer).
+function setPassword(employeeId, plain, q = null) {
+  return (q || { run }).run(
+    'UPDATE employees SET password_hash = ? WHERE id = ?', hash(plain), employeeId);
 }
 
-function setPin(employeeId, pin) {
+function setPin(employeeId, pin, q = null) {
+  const db = q || { run };
   const clean = String(pin || '').trim();
   if (clean === '') {
-    db.prepare('UPDATE employees SET pin_hash = NULL WHERE id = ?').run(employeeId);
-    return;
+    return db.run('UPDATE employees SET pin_hash = NULL WHERE id = ?', employeeId);
   }
   if (!/^\d{4,8}$/.test(clean)) {
     throw Object.assign(new Error('PIN must be 4 to 8 digits'), { status: 400 });
   }
-  db.prepare('UPDATE employees SET pin_hash = ? WHERE id = ?').run(hash(clean), employeeId);
+  return db.run('UPDATE employees SET pin_hash = ? WHERE id = ?', hash(clean), employeeId);
 }
 
 // --- kiosk device lock ------------------------------------------------------
@@ -57,29 +58,30 @@ function setPin(employeeId, pin) {
  */
 const KIOSK_COOKIE = 'mw.kiosk';
 
-function kioskPassphraseSet() {
-  return !!getSetting('kiosk_passphrase_hash', '');
+async function kioskPassphraseSet() {
+  return !!(await getSetting('kiosk_passphrase_hash', ''));
 }
 
-function setKioskPassphrase(plain, actorId) {
+async function setKioskPassphrase(plain, actorId) {
   const clean = String(plain || '').trim();
   if (clean === '') {
-    setSetting('kiosk_passphrase_hash', '');
-    audit(actorId, 'kiosk.unlock_removed', null, 'kiosk left open');
+    await setSetting('kiosk_passphrase_hash', '');
+    await audit(actorId, 'kiosk.unlock_removed', null, 'kiosk left open');
     return false;
   }
   if (clean.length < 6) {
     throw Object.assign(new Error('The kiosk passphrase must be at least 6 characters'),
       { status: 400 });
   }
-  setSetting('kiosk_passphrase_hash', hash(clean));
-  audit(actorId, 'kiosk.passphrase_set', null, 'all kiosk devices must unlock again');
+  await setSetting('kiosk_passphrase_hash', hash(clean));
+  await audit(actorId, 'kiosk.passphrase_set', null,
+    'all kiosk devices must unlock again');
   return true;
 }
 
 /** Token stored on the device; tied to the passphrase currently in force. */
-function kioskDeviceToken() {
-  const stored = getSetting('kiosk_passphrase_hash', '');
+async function kioskDeviceToken() {
+  const stored = await getSetting('kiosk_passphrase_hash', '');
   return crypto.createHash('sha256').update('kiosk:' + stored).digest('hex').slice(0, 32);
 }
 
@@ -93,21 +95,21 @@ function kioskDeviceToken() {
  * fails CLOSED rather than open. There is no window where a new deployment is
  * publicly punchable.
  */
-function kioskDeviceUnlocked(req) {
-  if (!kioskPassphraseSet()) return !isPublicDeployment();
+async function kioskDeviceUnlocked(req) {
+  if (!(await kioskPassphraseSet())) return !isPublicDeployment();
   const c = req.signedCookies && req.signedCookies[KIOSK_COOKIE];
-  return !!c && c === kioskDeviceToken();
+  return !!c && c === (await kioskDeviceToken());
 }
 
 const isPublicDeployment = () => process.env.SECURE_COOKIES === '1';
 
 /** True when the kiosk is shut because nobody has configured it yet. */
-function kioskNeedsSetup() {
-  return !kioskPassphraseSet() && isPublicDeployment();
+async function kioskNeedsSetup() {
+  return isPublicDeployment() && !(await kioskPassphraseSet());
 }
 
-function unlockKioskDevice(res, secure) {
-  res.cookie(KIOSK_COOKIE, kioskDeviceToken(), {
+async function unlockKioskDevice(res, secure) {
+  res.cookie(KIOSK_COOKIE, await kioskDeviceToken(), {
     signed: true,
     httpOnly: true,
     sameSite: 'lax',
@@ -116,22 +118,22 @@ function unlockKioskDevice(res, secure) {
   });
 }
 
-function checkKioskPassphrase(plain) {
-  const stored = getSetting('kiosk_passphrase_hash', '');
+async function checkKioskPassphrase(plain) {
+  const stored = await getSetting('kiosk_passphrase_hash', '');
   return !!stored && verify(plain, stored);
 }
 
 // --- route guards ----------------------------------------------------------
 
 /** Attach req.user from the session on every request. */
-function loadUser(req, res, next) {
+async function loadUser(req, res, next) {
   const id = req.session && req.session.userId;
   if (id) {
-    const u = db.prepare(
+    const u = await one(
       `SELECT e.id, e.emp_code, e.name, e.email, e.role, e.department_id,
               e.shift_id, e.active, d.name AS department_name
        FROM employees e LEFT JOIN departments d ON d.id = e.department_id
-       WHERE e.id = ?`).get(id);
+       WHERE e.id = ?`, id);
     // A user deactivated mid-session loses access at their next request.
     if (u && u.active) req.user = u;
     else req.session.destroy(() => {});
@@ -164,12 +166,12 @@ function requireRole(...roles) {
  * A manager may view their own team; an admin may view anyone; everyone else
  * only themselves. Used by any route that takes an :id in the path.
  */
-function canViewEmployee(user, employeeId) {
+async function canViewEmployee(user, employeeId) {
   if (!user) return false;
   if (user.role === 'admin') return true;
   if (Number(user.id) === Number(employeeId)) return true;
   if (user.role === 'manager') {
-    const row = db.prepare('SELECT manager_id FROM employees WHERE id = ?').get(employeeId);
+    const row = await one('SELECT manager_id FROM employees WHERE id = ?', employeeId);
     return !!row && Number(row.manager_id) === Number(user.id);
   }
   return false;

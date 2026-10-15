@@ -6,8 +6,8 @@ const express = require('express');
 const session = require('express-session');
 const cookieParser = require('cookie-parser');
 
-const { db, DB_PATH, getSetting, setSetting } = require('./db');
-const SqliteStore = require('./session-store');
+const { pool, init, one, getSetting, setSetting, DB_URL } = require('./db');
+const PgStore = require('./session-store');
 const { loadUser } = require('./auth');
 const svc = require('./lib/service');
 const fmt = require('./lib/dates');
@@ -28,23 +28,25 @@ const HOST = process.env.HOST || '0.0.0.0';
 // Generated once and kept in the settings table so sessions survive restarts
 // without asking whoever installs this to invent a secret. SESSION_SECRET in
 // the environment overrides it.
-function sessionSecret() {
+async function resolveSessionSecret() {
   if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
-  let s = getSetting('session_secret');
+  let s = await getSetting('session_secret');
   if (!s) {
     s = crypto.randomBytes(32).toString('hex');
-    setSetting('session_secret', s);
+    await setSetting('session_secret', s);
   }
   return s;
 }
+
+// Resolved once at boot and shared by the session middleware and the
+// signed-cookie parser, which must agree or the kiosk unlock breaks.
+let SECRET = process.env.SESSION_SECRET || '';
 
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.set('trust proxy', 1);
 
 app.use(express.urlencoded({ extended: false, limit: '256kb' }));
-// Signed cookies carry the kiosk device unlock, which outlives a session.
-app.use(cookieParser(sessionSecret()));
 
 // ---------------------------------------------------------------------------
 // Static assets
@@ -74,45 +76,97 @@ const ASSET_V = assetVersion('app.css', path.join('fonts', 'fonts.css'));
 
 app.use(express.static(PUBLIC_DIR, { maxAge: '1h' }));
 
-app.use(session({
-  name: 'mw.sid',
-  store: new SqliteStore(),
-  secret: sessionSecret(),
-  resave: false,
-  saveUninitialized: false,
-  rolling: true,
-  cookie: {
-    httpOnly: true,
-    sameSite: 'lax',
-    maxAge: 12 * 60 * 60 * 1000,
-    // Served over plain HTTP on an office LAN by default; set SECURE_COOKIES=1
-    // once a TLS terminator is in front of it.
-    secure: process.env.SECURE_COOKIES === '1',
-  },
-}));
+// ---------------------------------------------------------------------------
+// Bootstrap gate
+// ---------------------------------------------------------------------------
+// Everything below needs the database: the session store reads from it, and
+// the session secret is kept in it. This gate runs BEFORE any of that, and
+// before the routes, so nothing can be served with a half-initialised app.
+// Static assets are mounted above it on purpose - the stylesheet should still
+// load if the database is unreachable.
+
+let bootstrapped = null;
+
+function bootstrap() {
+  if (!bootstrapped) {
+    bootstrapped = (async () => {
+      await init();
+      SECRET = await resolveSessionSecret();
+    })().catch((e) => {
+      bootstrapped = null;             // let the next request retry
+      throw e;
+    });
+  }
+  return bootstrapped;
+}
+
+// Built once, after the secret is known. Constructing them at module load
+// would bake in an empty secret and silently invalidate every cookie.
+let cookieMw = null;
+let sessionMw = null;
+
+app.use(async (req, res, next) => {
+  try {
+    await bootstrap();
+  } catch (e) {
+    return next(e);
+  }
+  if (!cookieMw) {
+    // Signed cookies carry the kiosk device unlock, which outlives a session.
+    cookieMw = cookieParser(SECRET);
+    sessionMw = session({
+      name: 'mw.sid',
+      store: new PgStore(),
+      secret: SECRET,
+      resave: false,
+      saveUninitialized: false,
+      rolling: true,
+      cookie: {
+        httpOnly: true,
+        sameSite: 'lax',
+        maxAge: 12 * 60 * 60 * 1000,
+        // Plain HTTP on an office LAN by default; set SECURE_COOKIES=1 once a
+        // TLS terminator is in front of it.
+        secure: process.env.SECURE_COOKIES === '1',
+      },
+    });
+  }
+  cookieMw(req, res, (err) => (err ? next(err) : sessionMw(req, res, next)));
+});
 
 app.use(loadUser);
 
 // Helpers and flash messages available to every template. This runs before
 // the CSRF guard below, because that guard renders a page when it rejects and
 // every template needs these locals to exist.
-app.use((req, res, next) => {
+app.use(async (req, res, next) => {
+  // Set every cheap, synchronous local FIRST. If one of the database-backed
+  // ones below throws, the error page still has what it needs to render -
+  // otherwise a failed query produces a second failure inside the error
+  // handler and the user sees a blank 500 instead of the reason.
   res.locals.fmt = fmt;
   res.locals.assetV = ASSET_V;
   res.locals.icon = ui.icon;
   res.locals.avatar = ui.avatar;
   res.locals.STATUS_LABELS = STATUS_LABELS;
+  res.locals.path = req.path;
+  res.locals.query = req.query;
+  res.locals.calendarToday = fmt.isoDate();
+  res.locals.today = fmt.isoDate();
+  res.locals.navCounts = null;
+  res.locals.flash = null;
   // The business date in progress, not the calendar date - on a night shift
   // these differ between midnight and the early afternoon.
-  res.locals.today = svc.currentBusinessDate();
-  res.locals.calendarToday = fmt.isoDate();
+  //
+  // These are awaited, not assigned as promises: a template that received a
+  // pending promise would render "[object Promise]" into the page rather than
+  // fail, which is the kind of bug that ships.
+  res.locals.today = await svc.currentBusinessDate();
   // Nav badge counts. Only staff screens show them, so skip the work entirely
   // for a plain employee - it is a per-request scan of the month.
   res.locals.navCounts = (req.user && req.user.role !== 'employee')
-    ? svc.navCounts()
+    ? await svc.navCounts()
     : null;
-  res.locals.path = req.path;
-  res.locals.query = req.query;
   if (req.session) {
     res.locals.flash = req.session.flash || null;
     delete req.session.flash;
@@ -157,7 +211,16 @@ app.use('/kiosk', require('./routes/kiosk'));
 app.use('/admin', require('./routes/admin'));
 app.use('/reports', require('./routes/reports'));
 
-app.get('/healthz', (req, res) => res.json({ ok: true, db: DB_PATH }));
+app.get('/healthz', async (req, res) => {
+  // Prove the database answers, not merely that the process is up - on a
+  // managed Postgres the connection is the thing that fails.
+  try {
+    await one('SELECT 1 AS ok');
+    res.json({ ok: true, db: 'connected' });
+  } catch (e) {
+    res.status(503).json({ ok: false, db: 'unreachable', error: e.message });
+  }
+});
 
 app.use((req, res) => {
   res.status(404).render('error', {
@@ -181,39 +244,48 @@ app.use((err, req, res, next) => {
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------------
+
 if (require.main === module) {
-  const hasAdmin = db.prepare(
-    "SELECT 1 FROM employees WHERE role = 'admin' AND active = 1").get();
-
-  const server = app.listen(PORT, HOST, () => {
-    const addr = server.address();
-    // Print the URL that actually works: when HOST is pinned to a LAN address,
-    // localhost is NOT reachable, and saying otherwise sends whoever installs
-    // this chasing a connection refused.
-    const host = HOST === '0.0.0.0' ? 'localhost' : HOST;
-    console.log(`\n  Mindwave Attendance  ->  http://${host}:${PORT}`);
-    console.log(`  Kiosk                ->  http://${host}:${PORT}/kiosk`);
-    console.log(`  Listening on: ${addr.address}:${addr.port}`);
-    console.log(`  Database: ${DB_PATH}`);
-    if (HOST === '0.0.0.0') {
-      console.log('  NOTE: bound to every interface. If this machine runs a VPN or');
-      console.log('        is internet-facing, set HOST to your office LAN address.');
+  (async () => {
+    try {
+      await bootstrap();
+    } catch (e) {
+      console.error('\n  Cannot reach the database.');
+      console.error('  ' + e.message.split('\n')[0]);
+      console.error('  Set DATABASE_URL to your Supabase connection string.\n');
+      process.exit(1);
     }
-    if (!hasAdmin) {
-      console.log('\n  No admin account exists yet. Run:  npm run seed\n');
-    } else {
-      console.log('');
-    }
-  });
 
-  const close = () => {
-    server.close(() => {
-      db.close();
-      process.exit(0);
+    const hasAdmin = await one(
+      "SELECT 1 FROM employees WHERE role = 'admin' AND active = 1");
+
+    const server = app.listen(PORT, HOST, () => {
+      const addr = server.address();
+      const host = HOST === '0.0.0.0' ? 'localhost' : HOST;
+      const where = DB_URL.replace(/:[^:@/]*@/, ':****@');
+      console.log(`\n  Mindwave Attendance  ->  http://${host}:${PORT}`);
+      console.log(`  Kiosk                ->  http://${host}:${PORT}/kiosk`);
+      console.log(`  Listening on: ${addr.address}:${addr.port}`);
+      console.log(`  Database: ${where.slice(0, 72)}`);
+      if (!hasAdmin) {
+        console.log('\n  No admin account exists yet. Run:  npm run seed\n');
+      } else {
+        console.log('');
+      }
     });
-  };
-  process.on('SIGINT', close);
-  process.on('SIGTERM', close);
+
+    const close = () => {
+      server.close(async () => {
+        await pool.end().catch(() => {});
+        process.exit(0);
+      });
+    };
+    process.on('SIGINT', close);
+    process.on('SIGTERM', close);
+  })();
 }
 
 module.exports = app;

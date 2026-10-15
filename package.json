@@ -8,19 +8,23 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
+    "dev:memory": "node scripts/dev-memory.js",
     "seed": "node src/seed.js",
     "test": "node --test src/lib/attendance.test.js src/lib/import.test.js src/lib/business-date.test.js src/lib/self-entry.test.js",
-    "backup": "node scripts/backup.js"
+    "export": "node scripts/export.js"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
-    "better-sqlite3": "^13.0.3",
     "cookie-parser": "^1.4.7",
     "ejs": "^7.0.1",
     "express": "^5.3.0",
-    "express-session": "^1.19.0"
+    "express-session": "^1.19.0",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "pg-mem": "^3.0.14"
   }
 }

@@ -5,18 +5,33 @@ hundred staff. Employees check in and out from their browser or from a shared
 kiosk at the entrance; the system applies shift rules to decide what each day
 counts as, and HR exports the month for payroll.
 
-No build step, no external services, no CDN. One Node process and one SQLite
-file. The two typefaces (Afacad and Urbanist, both OFL) are self-hosted from
-`public/fonts`, so the app and the entrance kiosk render correctly on a network
-with no internet access.
+No build step and no CDN. Express and EJS on top of PostgreSQL (Supabase).
+The two typefaces (Afacad and Urbanist, both OFL) are self-hosted from
+`public/fonts`, so the app and the entrance kiosk render correctly even on a
+network with no outside internet access.
 
 ## Quick start
 
 ```bash
 npm install
-npm run seed          # creates shifts, departments and an admin account
-npm start             # http://localhost:3000
+cp .env.example .env          # then put your Supabase URL in DATABASE_URL
+npm run seed                  # creates shifts, departments and an admin account
+npm start                     # http://localhost:3000
 ```
+
+`DATABASE_URL` comes from the Supabase dashboard under
+**Project Settings -> Database -> Connection string**. Use the *Session pooler*
+URI for a long-running server and the *Transaction pooler* URI on a serverless
+host such as Vercel.
+
+To work on it without a database at all:
+
+```bash
+npm run dev:memory            # runs against an in-memory Postgres
+```
+
+Nothing persists in that mode - it rebuilds the schema on every start - but it
+is the whole app, real SQL included.
 
 `npm run seed` creates a first admin account and prints its password once.
 Sign in, create your own named admin account, then **delete the seed admin** so
@@ -132,7 +147,13 @@ the audit trail with who made it and why.
 
 ## How a day is judged
 
-Punches are the source of truth. Day summaries are **derived on every read**
+Punches are the source of truth, stored in PostgreSQL. Timestamps are kept as
+local wall-clock text rather than `timestamptz`, deliberately: every shift rule
+is written in local time ("the shift starts at 20:00"), and an overnight
+shift's business date is derived from that same clock. Storing an absolute
+instant would mean converting back before every comparison.
+
+Day summaries are **derived on every read**
 rather than stored, so changing a shift rule or a holiday immediately corrects
 every past day for the affected staff — there is no stale cached total that can
 disagree with the punch record.
@@ -286,22 +307,26 @@ records, so they are worth keeping green.
 ## Layout
 
 ```
+api/index.js           Vercel entry point (exports the app, never listens)
 src/
-  server.js            express app, sessions, CSRF, error pages
-  db.js                SQLite connection, schema load, column migrations
-  schema.sql           tables
+  server.js            express app, bootstrap gate, sessions, CSRF, error pages
+  db.js                PostgreSQL pool, query helpers, schema init
+  schema.sql           tables (PostgreSQL)
   seed.js              first-run setup and demo data
   auth.js              password/PIN hashing, login, route guards
-  session-store.js     SQLite session store (survives restarts)
+  session-store.js     PostgreSQL session store
   lib/
     dates.js           local-time helpers
     attendance.js      the rules engine - the heart of the system
     attendance.test.js its tests
     import.js          CSV staff import: parse, validate, plan
     import.test.js     its tests
-    service.js         all attendance reads and writes
+    service.js         all attendance reads and writes (async)
   routes/              auth, me, kiosk, admin, reports
   views/               EJS templates
+scripts/
+  dev-memory.js        run the app on an in-memory Postgres
+  export.js            dump every table to JSON
 public/app.css         one stylesheet, light and dark
 public/theme.js        the light/dark/auto switcher
 public/fonts/          self-hosted Afacad + Urbanist (OFL)

@@ -1,37 +1,32 @@
 'use strict';
 /**
- * SQLite-backed session store. The default MemoryStore would log everyone out
- * on every restart, which on a self-hosted office box means every deploy.
+ * PostgreSQL-backed session store.
+ *
+ * The default MemoryStore would log everyone out on every restart - and on a
+ * serverless host, where each invocation is a new process, it would log them
+ * out between page loads. Sessions have to live in the database.
  */
 const { Store } = require('express-session');
-const { db } = require('./db');
+const { all, one, run } = require('./db');
 
 const DEFAULT_TTL_MS = 12 * 60 * 60 * 1000;
+const SWEEP_EVERY_MS = 60 * 60 * 1000;
 
-class SqliteStore extends Store {
+class PgStore extends Store {
   constructor() {
     super();
-    this.stmts = {
-      get: db.prepare('SELECT data, expires_at FROM sessions WHERE sid = ?'),
-      set: db.prepare(`INSERT INTO sessions (sid, data, expires_at) VALUES (?, ?, ?)
-                       ON CONFLICT(sid) DO UPDATE SET
-                         data = excluded.data, expires_at = excluded.expires_at`),
-      del: db.prepare('DELETE FROM sessions WHERE sid = ?'),
-      touch: db.prepare('UPDATE sessions SET expires_at = ? WHERE sid = ?'),
-      sweep: db.prepare('DELETE FROM sessions WHERE expires_at < ?'),
-    };
-    // Clear anything already expired, then sweep hourly.
-    this.sweep();
-    this.timer = setInterval(() => this.sweep(), 60 * 60 * 1000);
-    this.timer.unref();
+    this.lastSweep = 0;
+    // No timer: a serverless invocation may not live long enough to fire one,
+    // and a long-lived process gets the same effect from the lazy sweep below.
   }
 
-  sweep() {
-    try {
-      this.stmts.sweep.run(Date.now());
-    } catch {
-      /* a failed sweep is not worth taking the server down for */
-    }
+  /** Drop expired rows, at most once an hour, without blocking the request. */
+  maybeSweep() {
+    const now = Date.now();
+    if (now - this.lastSweep < SWEEP_EVERY_MS) return;
+    this.lastSweep = now;
+    run('DELETE FROM sessions WHERE expires_at < ?', now)
+      .catch((e) => console.error('[sessions] sweep failed:', e.message));
   }
 
   expiryOf(sess) {
@@ -42,50 +37,64 @@ class SqliteStore extends Store {
   }
 
   get(sid, cb) {
-    let row;
-    try {
-      row = this.stmts.get.get(sid);
-    } catch (e) {
-      return cb(e);
-    }
-    if (!row) return cb(null, null);
-    if (row.expires_at < Date.now()) {
-      this.stmts.del.run(sid);
-      return cb(null, null);
-    }
-    try {
-      cb(null, JSON.parse(row.data));
-    } catch (e) {
-      cb(e);
-    }
+    this.maybeSweep();
+    one('SELECT data, expires_at FROM sessions WHERE sid = ?', sid)
+      .then((row) => {
+        if (!row) return cb(null, null);
+        if (Number(row.expires_at) < Date.now()) {
+          run('DELETE FROM sessions WHERE sid = ?', sid).catch(() => {});
+          return cb(null, null);
+        }
+        try {
+          cb(null, JSON.parse(row.data));
+        } catch (e) {
+          cb(e);
+        }
+      })
+      .catch(cb);
   }
 
   set(sid, sess, cb) {
-    try {
-      this.stmts.set.run(sid, JSON.stringify(sess), this.expiryOf(sess));
-      cb(null);
-    } catch (e) {
-      cb(e);
-    }
+    run(
+      `INSERT INTO sessions (sid, data, expires_at) VALUES (?, ?, ?)
+       ON CONFLICT (sid) DO UPDATE SET
+         data = EXCLUDED.data, expires_at = EXCLUDED.expires_at`,
+      sid, JSON.stringify(sess), this.expiryOf(sess),
+    ).then(() => cb(null)).catch(cb);
   }
 
   destroy(sid, cb) {
-    try {
-      this.stmts.del.run(sid);
-      cb(null);
-    } catch (e) {
-      cb(e);
-    }
+    run('DELETE FROM sessions WHERE sid = ?', sid)
+      .then(() => cb(null)).catch(cb);
   }
 
   touch(sid, sess, cb) {
-    try {
-      this.stmts.touch.run(this.expiryOf(sess), sid);
-      cb(null);
-    } catch (e) {
-      cb(e);
-    }
+    run('UPDATE sessions SET expires_at = ? WHERE sid = ?', this.expiryOf(sess), sid)
+      .then(() => cb(null)).catch(cb);
+  }
+
+  length(cb) {
+    one('SELECT COUNT(*) AS n FROM sessions')
+      .then((r) => cb(null, Number(r.n))).catch(cb);
+  }
+
+  clear(cb) {
+    run('DELETE FROM sessions').then(() => cb(null)).catch(cb);
+  }
+
+  all(cb) {
+    all('SELECT sid, data FROM sessions WHERE expires_at >= ?', Date.now())
+      .then((rows) => {
+        const out = {};
+        for (const r of rows) {
+          try {
+            out[r.sid] = JSON.parse(r.data);
+          } catch { /* skip a corrupt row rather than fail the lot */ }
+        }
+        cb(null, out);
+      })
+      .catch(cb);
   }
 }
 
-module.exports = SqliteStore;
+module.exports = PgStore;

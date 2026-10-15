@@ -1,112 +1,194 @@
 'use strict';
+/**
+ * PostgreSQL access layer (Supabase).
+ *
+ * Everything here is async, because node-postgres is. Call sites keep `?`
+ * placeholders, which are translated to Postgres's `$1..$n` on the way out -
+ * that keeps the SQL readable and meant the port did not have to renumber a
+ * hundred queries by hand.
+ *
+ * Three shapes cover every query in the app:
+ *   one(sql, ...args)  -> the first row, or undefined
+ *   all(sql, ...args)  -> an array of rows
+ *   run(sql, ...args)  -> { rowCount, rows } for writes
+ * and `tx(fn)` runs a function against a single pooled client, so a batch of
+ * writes commits or rolls back together.
+ */
 const fs = require('node:fs');
 const path = require('node:path');
-const Database = require('better-sqlite3');
+const { Pool, types } = require('pg');
 
-const DB_PATH = process.env.DB_PATH
-  || path.join(__dirname, '..', 'data', 'attendance.db');
+// Return BIGINT and NUMERIC as JavaScript numbers. COUNT(*) comes back as a
+// string otherwise, and `'3' > 2` is the kind of bug that hides for months.
+// Guarded because a test double for `pg` need not implement the type registry.
+if (types && typeof types.setTypeParser === 'function') {
+  types.setTypeParser(20, (v) => (v === null ? null : Number(v)));   // int8
+  types.setTypeParser(1700, (v) => (v === null ? null : Number(v))); // numeric
+}
 
-fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-
-const db = new Database(DB_PATH);
-db.pragma('foreign_keys = ON');
-db.exec(fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'));
+const CONNECTION = process.env.DATABASE_URL || process.env.SUPABASE_DB_URL || '';
 
 /**
- * `CREATE TABLE IF NOT EXISTS` never adds a column to a table that already
- * exists, so a schema change would silently skip live databases. Each entry
- * here is an additive column that is applied once if missing.
+ * Supabase requires TLS. Its pooler presents a certificate that does not chain
+ * to a root bundled with Node, so verification is relaxed for that host only -
+ * the connection is still encrypted. Anything else keeps full verification.
  */
-const COLUMN_MIGRATIONS = [
-  ['shifts', 'break_after_minutes', 'INTEGER NOT NULL DEFAULT 360'],
-  ['audit_log', 'actor_name', 'TEXT'],
-];
+function sslFor(url) {
+  if (!url) return false;
+  if (/sslmode=disable/.test(url)) return false;
+  if (/supabase\.(co|com)/.test(url)) return { rejectUnauthorized: false };
+  return { rejectUnauthorized: true };
+}
 
-function migrateColumns() {
-  for (const [table, column, decl] of COLUMN_MIGRATIONS) {
-    const exists = db.prepare(`SELECT 1 FROM pragma_table_info(?) WHERE name = ?`)
-      .get(table, column);
-    if (!exists) {
-      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
-      console.log(`[db] migrated: ${table}.${column}`);
+const pool = new Pool({
+  connectionString: CONNECTION,
+  ssl: sslFor(CONNECTION),
+  // Serverless invocations are short and numerous; a small pool with a brisk
+  // idle timeout avoids exhausting Supabase's connection limit.
+  max: Number(process.env.PG_POOL_MAX || 5),
+  idleTimeoutMillis: 10000,
+  connectionTimeoutMillis: 15000,
+});
+
+pool.on('error', (err) => {
+  // An idle client dropped by the server must not take the process down.
+  console.error('[db] idle client error:', err.message);
+});
+
+/** `?` -> `$1..$n`, ignoring question marks inside quoted literals. */
+function toPg(sql) {
+  let i = 0;
+  let out = '';
+  let inSingle = false;
+  let inDouble = false;
+  for (let p = 0; p < sql.length; p++) {
+    const c = sql[p];
+    if (c === "'" && !inDouble) inSingle = !inSingle;
+    else if (c === '"' && !inSingle) inDouble = !inDouble;
+    if (c === '?' && !inSingle && !inDouble) {
+      i += 1;
+      out += `$${i}`;
+    } else {
+      out += c;
     }
   }
+  return out;
 }
-migrateColumns();
+
+async function query(sql, args) {
+  const text = toPg(sql);
+  try {
+    return await pool.query(text, args);
+  } catch (e) {
+    // Without the statement, a Postgres error is near-impossible to place.
+    e.message = `${e.message}\n  SQL: ${text.replace(/\s+/g, ' ').trim().slice(0, 300)}`;
+    throw e;
+  }
+}
+
+const all = async (sql, ...args) => (await query(sql, args)).rows;
+const one = async (sql, ...args) => (await query(sql, args)).rows[0];
+const run = async (sql, ...args) => {
+  const r = await query(sql, args);
+  return { rowCount: r.rowCount, rows: r.rows };
+};
 
 /**
- * SQLite cannot alter a CHECK constraint, so widening one means rebuilding the
- * table. Done inside a transaction with foreign keys briefly off, which is the
- * documented procedure; rows are copied across untouched.
+ * Run `fn` inside a transaction. `fn` receives helpers bound to one client, so
+ * every statement inside genuinely shares the transaction.
  */
-function migratePunchSource() {
-  const row = db.prepare(
-    "SELECT sql FROM sqlite_master WHERE type='table' AND name='punches'").get();
-  if (!row || row.sql.includes("'self'")) return;
-
-  db.pragma('foreign_keys = OFF');
-  db.transaction(() => {
-    db.exec(`
-      CREATE TABLE punches_new (
-        id           INTEGER PRIMARY KEY AUTOINCREMENT,
-        employee_id  INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-        punched_at   TEXT    NOT NULL,
-        work_date    TEXT    NOT NULL,
-        kind         TEXT    NOT NULL CHECK (kind IN ('in','out')),
-        source       TEXT    NOT NULL DEFAULT 'web'
-                     CHECK (source IN ('web','kiosk','admin','import','self')),
-        note         TEXT,
-        created_by   INTEGER REFERENCES employees(id) ON DELETE SET NULL,
-        created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
-      );
-      INSERT INTO punches_new
-        SELECT id, employee_id, punched_at, work_date, kind, source, note,
-               created_by, created_at FROM punches;
-      DROP TABLE punches;
-      ALTER TABLE punches_new RENAME TO punches;
-      CREATE INDEX IF NOT EXISTS idx_punches_emp_date ON punches(employee_id, work_date);
-      CREATE INDEX IF NOT EXISTS idx_punches_date     ON punches(work_date);
-    `);
-  })();
-  db.pragma('foreign_keys = ON');
-  console.log('[db] migrated: punches.source now allows self-entry');
+async function tx(fn) {
+  const client = await pool.connect();
+  const bound = {
+    all: async (sql, ...args) => (await client.query(toPg(sql), args)).rows,
+    one: async (sql, ...args) => (await client.query(toPg(sql), args)).rows[0],
+    run: async (sql, ...args) => {
+      const r = await client.query(toPg(sql), args);
+      return { rowCount: r.rowCount, rows: r.rows };
+    },
+  };
+  try {
+    await client.query('BEGIN');
+    const result = await fn(bound);
+    await client.query('COMMIT');
+    return result;
+  } catch (e) {
+    try {
+      await client.query('ROLLBACK');
+    } catch { /* the connection may already be gone */ }
+    throw e;
+  } finally {
+    client.release();
+  }
 }
-migratePunchSource();
 
-function getSetting(key, fallback = null) {
-  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+// --- schema -----------------------------------------------------------------
+
+let ready = null;
+
+/**
+ * Create the schema if it is missing. Safe on every cold start: every statement
+ * is IF NOT EXISTS, and the promise is cached so concurrent requests do not
+ * race through it.
+ */
+function init() {
+  if (!ready) {
+    ready = (async () => {
+      if (!CONNECTION) {
+        throw new Error(
+          'No database configured. Set DATABASE_URL to your Supabase connection string.');
+      }
+      const sql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
+      await pool.query(sql);
+    })().catch((e) => {
+      ready = null;              // let the next request retry rather than wedge
+      throw e;
+    });
+  }
+  return ready;
+}
+
+// --- small helpers used everywhere ------------------------------------------
+
+/** "YYYY-MM-DD HH:MM:SS" local, matching how every other timestamp is stored. */
+function nowStamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} `
+    + `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+async function getSetting(key, fallback = null) {
+  const row = await one('SELECT value FROM settings WHERE key = ?', key);
   return row ? row.value : fallback;
 }
 
-function setSetting(key, value) {
-  db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?)
-              ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
-    .run(key, String(value));
+async function setSetting(key, value) {
+  await run(
+    `INSERT INTO settings (key, value) VALUES (?, ?)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+    key, String(value),
+  );
 }
 
-function audit(actorId, action, target, detail) {
-  // Capture the name now. The id alone is not enough: it is set to NULL if the
-  // employee is ever deleted, and an audit entry with no actor is useless.
+async function audit(actorId, action, target, detail) {
+  // Capture the name now: actor_id is set to NULL if the employee is ever
+  // deleted, and an audit entry with no actor is useless.
   let actorName = null;
   if (actorId != null) {
-    const row = db.prepare('SELECT name FROM employees WHERE id = ?').get(actorId);
+    const row = await one('SELECT name FROM employees WHERE id = ?', actorId);
     if (row) actorName = row.name;
   }
-  db.prepare(`INSERT INTO audit_log (actor_id, actor_name, action, target, detail)
-              VALUES (?, ?, ?, ?, ?)`)
-    .run(actorId ?? null, actorName, action, target ?? null,
-         detail == null ? null : String(detail));
+  await run(
+    `INSERT INTO audit_log (actor_id, actor_name, action, target, detail, at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    actorId ?? null, actorName, action, target ?? null,
+    detail == null ? null : String(detail), nowStamp(),
+  );
 }
 
-/** Fill in actor_name for rows written before the column existed. */
-function backfillAuditNames() {
-  const n = db.prepare(`
-    UPDATE audit_log SET actor_name = (
-      SELECT e.name FROM employees e WHERE e.id = audit_log.actor_id
-    )
-    WHERE actor_name IS NULL AND actor_id IS NOT NULL`).run().changes;
-  if (n) console.log(`[db] backfilled ${n} audit actor name(s)`);
-}
-backfillAuditNames();
-
-module.exports = { db, DB_PATH, getSetting, setSetting, audit };
+module.exports = {
+  pool, init, all, one, run, tx, toPg,
+  getSetting, setSetting, audit, nowStamp,
+  DB_URL: CONNECTION,
+};

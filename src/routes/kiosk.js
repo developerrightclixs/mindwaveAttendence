@@ -50,36 +50,36 @@ function throttleFail(code) {
 // Device lock. When a passphrase is set, this tablet must be unlocked once
 // before anybody can punch from it - the difference between a shared screen
 // inside the office and an open punch endpoint on the internet.
-function render(res, extra) {
+async function render(res, extra) {
   res.render('kiosk', {
     title: 'Attendance kiosk',
     layout: false,
     error: null,
     result: null,
     locked: false,
-    needsSetup: kioskNeedsSetup(),
-    date: prettyDate(svc.currentBusinessDate()),
+    needsSetup: await kioskNeedsSetup(),
+    date: prettyDate(await svc.currentBusinessDate()),
     ...extra,
   });
 }
 
-router.use((req, res, next) => {
-  if (req.path === '/unlock' || kioskDeviceUnlocked(req)) return next();
+router.use(async (req, res, next) => {
+  if (req.path === '/unlock' || await kioskDeviceUnlocked(req)) return next();
   return render(res, { locked: true });
 });
 
-router.post('/unlock', (req, res) => {
-  if (!kioskPassphraseSet()) return res.redirect('/kiosk');
-  if (!checkKioskPassphrase(req.body.passphrase)) {
+router.post('/unlock', async (req, res) => {
+  if (!(await kioskPassphraseSet())) return res.redirect('/kiosk');
+  if (!(await checkKioskPassphrase(req.body.passphrase))) {
     return render(res, { locked: true, error: 'That passphrase is not right.' });
   }
-  unlockKioskDevice(res, process.env.SECURE_COOKIES === '1');
+  await unlockKioskDevice(res, process.env.SECURE_COOKIES === '1');
   res.redirect('/kiosk');
 });
 
 router.get('/', (req, res) => render(res, {}));
 
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const code = String(req.body.emp_code || '').trim();
   const pin = String(req.body.pin || '').trim();
 
@@ -88,7 +88,7 @@ router.post('/', (req, res) => {
   const locked = throttleCheck(code.toLowerCase());
   if (locked) return show(locked, null);
 
-  const emp = authenticatePin(code, pin);
+  const emp = await authenticatePin(code, pin);
   if (!emp) {
     throttleFail(code.toLowerCase());
     // One message for a bad code and a bad PIN, so the kiosk cannot be used
@@ -99,12 +99,12 @@ router.post('/', (req, res) => {
   attempts.delete(code.toLowerCase());
 
   try {
-    const r = svc.recordPunch({
+    const r = await svc.recordPunch({
       employeeId: emp.id,
       source: 'kiosk',
       actorId: emp.id,
     });
-    const state = svc.employeeDays(emp.id, r.work_date, r.work_date);
+    const state = await svc.employeeDays(emp.id, r.work_date, r.work_date);
     return show(null, {
       name: emp.name,
       kind: r.kind,

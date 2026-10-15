@@ -7,14 +7,14 @@ const { monthBounds, addDays } = require('../lib/dates');
 const router = express.Router();
 
 /** Employee home: punch button plus this month at a glance. */
-router.get('/', requireLogin, (req, res) => {
-  const state = svc.punchState(req.user.id);
+router.get('/', requireLogin, async (req, res) => {
+  const state = await svc.punchState(req.user.id);
   // punchState already resolved which night this employee is on; the summary
   // row must match it, or at 01:00 a working employee is told they have not
   // checked in.
   const workDate = state.workDate;
   const { from, to } = monthBounds(workDate);
-  const mine = svc.employeeDays(req.user.id, from, to);
+  const mine = await svc.employeeDays(req.user.id, from, to);
   const todayDay = mine.days.find((d) => d.date === workDate);
 
   res.render('home', {
@@ -24,15 +24,15 @@ router.get('/', requireLogin, (req, res) => {
     days: [...mine.days].filter((d) => d.date <= workDate).reverse(),
     totals: mine.totals,
     employee: mine.employee,
-    selfEntryOpen: svc.selfEntryWindow().enabled,
+    selfEntryOpen: (await svc.selfEntryWindow()).enabled,
     month: from,
   });
 });
 
 /** Self check-in / check-out. */
-router.post('/punch', requireLogin, (req, res) => {
+router.post('/punch', requireLogin, async (req, res) => {
   try {
-    const r = svc.recordPunch({
+    const r = await svc.recordPunch({
       employeeId: req.user.id,
       kind: req.body.kind || null,
       source: 'web',
@@ -55,21 +55,21 @@ router.post('/punch', requireLogin, (req, res) => {
 // completed by the people who actually know it; every entry is written with
 // source 'self' and lands in the audit trail under their name.
 
-router.get('/my/timings', requireLogin, (req, res) => {
-  const data = svc.selfEntryNights(req.user.id);
+router.get('/my/timings', requireLogin, async (req, res) => {
+  const data = await svc.selfEntryNights(req.user.id);
   res.render('my-timings', {
     title: 'Fill in my timings',
     window: data.window,
     nights: data.nights,
     employee: data.employee || null,
-    shift: req.user.shift_id ? svc.getShift(req.user.shift_id) : null,
+    shift: req.user.shift_id ? await svc.getShift(req.user.shift_id) : null,
   });
 });
 
-router.post('/my/timings', requireLogin, (req, res) => {
+router.post('/my/timings', requireLogin, async (req, res) => {
   const workDate = String(req.body.work_date || '');
   try {
-    svc.recordSelfEntry({
+    await svc.recordSelfEntry({
       employeeId: req.user.id,
       workDate,
       inTime: String(req.body.in_time || '').trim(),
@@ -88,18 +88,18 @@ router.post('/my/timings', requireLogin, (req, res) => {
  * One employee's month. Employees reach their own; managers reach their team;
  * admins reach anyone.
  */
-router.get('/employee/:id', requireLogin, (req, res, next) => {
+router.get('/employee/:id', requireLogin, async (req, res, next) => {
   const id = Number(req.params.id);
-  if (!canViewEmployee(req.user, id)) {
+  if (!(await canViewEmployee(req.user, id))) {
     return res.status(403).render('error', {
       title: 'Not allowed',
       message: 'You can only view your own attendance.',
     });
   }
   const month = /^\d{4}-\d{2}-\d{2}$/.test(req.query.month || '')
-    ? req.query.month : svc.employeeBusinessDate(id);
+    ? req.query.month : await svc.employeeBusinessDate(id);
   const { from, to } = monthBounds(month);
-  const data = svc.employeeDays(id, from, to);
+  const data = await svc.employeeDays(id, from, to);
   if (!data) return next();
 
   res.render('employee-month', {

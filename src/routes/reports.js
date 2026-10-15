@@ -32,19 +32,20 @@ function sendCsv(res, filename, rows) {
 }
 
 /** Monthly summary, one row per employee. */
-router.get('/monthly', (req, res) => {
+router.get('/monthly', async (req, res) => {
   const month = /^\d{4}-\d{2}-\d{2}$/.test(req.query.month || '')
-    ? req.query.month : svc.currentBusinessDate();
+    ? req.query.month : await svc.currentBusinessDate();
   const departmentId = req.query.dept ? Number(req.query.dept) : null;
   // A manager only ever sees their own team.
   const managerId = req.user.role === 'manager' ? req.user.id : null;
 
   const { from, to } = monthBounds(month);
-  const employees = svc.listEmployees({ departmentId, managerId });
-  const rows = employees.map((e) => {
-    const r = svc.employeeDays(e.id, from, to);
-    return { employee: e, totals: r.totals };
-  });
+  const employees = await svc.listEmployees({ departmentId, managerId });
+  const rows = [];
+  for (const e of employees) {
+    const r = await svc.employeeDays(e.id, from, to);
+    rows.push({ employee: e, totals: r.totals });
+  }
 
   if (req.query.format === 'csv') {
     const out = [[
@@ -76,18 +77,18 @@ router.get('/monthly', (req, res) => {
     month: from,
     prevMonth: addDays(from, -1),
     nextMonth: addDays(to, 1),
-    departments: svc.listDepartments(),
+    departments: await svc.listDepartments(),
     departmentId,
   });
 });
 
 /** Full punch-level detail for one month - what payroll queries get audited against. */
-router.get('/detail', (req, res) => {
+router.get('/detail', async (req, res) => {
   const month = /^\d{4}-\d{2}-\d{2}$/.test(req.query.month || '')
-    ? req.query.month : svc.currentBusinessDate();
+    ? req.query.month : await svc.currentBusinessDate();
   const { from, to } = monthBounds(month);
   const managerId = req.user.role === 'manager' ? req.user.id : null;
-  const employees = svc.listEmployees({ managerId });
+  const employees = await svc.listEmployees({ managerId });
 
   const out = [[
     'Employee code', 'Name', 'Date', 'Weekday', 'Shift', 'Status',
@@ -96,7 +97,7 @@ router.get('/detail', (req, res) => {
     'Day credit', 'Note', 'Data problems',
   ]];
   for (const e of employees) {
-    const r = svc.employeeDays(e.id, from, to);
+    const r = await svc.employeeDays(e.id, from, to);
     for (const d of r.days) {
       if (d.status === 'not_employed' || d.status === 'upcoming') continue;
       out.push([
@@ -113,19 +114,19 @@ router.get('/detail', (req, res) => {
 });
 
 /** Everything wrong with the month, so HR can fix it before payroll runs. */
-router.get('/exceptions', (req, res) => {
+router.get('/exceptions', async (req, res) => {
   const month = /^\d{4}-\d{2}-\d{2}$/.test(req.query.month || '')
-    ? req.query.month : svc.currentBusinessDate();
+    ? req.query.month : await svc.currentBusinessDate();
   const { from, to } = monthBounds(month);
   const managerId = req.user.role === 'manager' ? req.user.id : null;
-  const employees = svc.listEmployees({ managerId });
+  const employees = await svc.listEmployees({ managerId });
   // The night in progress is not yet an exception: an open check-in at 01:00
   // is someone at work, not a missing punch.
-  const today = svc.currentBusinessDate();
+  const today = await svc.currentBusinessDate();
 
   const items = [];
   for (const e of employees) {
-    const r = svc.employeeDays(e.id, from, to);
+    const r = await svc.employeeDays(e.id, from, to);
     for (const d of r.days) {
       // Today is still in progress; an open check-in is not yet a problem.
       if (d.date >= today) continue;

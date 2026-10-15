@@ -7,8 +7,12 @@
  * table. At this scale a month for the whole org is a few thousand rows, and
  * deriving avoids the classic payroll bug where a shift or override changes but
  * a stale cached summary keeps feeding the old numbers into reports.
+ *
+ * Every function here is async: the store is PostgreSQL. The rules engine it
+ * calls (attendance.js) stays pure and synchronous, which is why moving from
+ * SQLite put no payroll calculation at risk.
  */
-const { db, audit, getSetting, setSetting } = require('../db');
+const { all, one, run, tx, audit, getSetting, setSetting, nowStamp } = require('../db');
 const { evaluateDay, summarise, resolveWorkDate } = require('./attendance');
 const { isoStamp, dateRange, addDays, monthBounds, isoWeekday } = require('./dates');
 
@@ -25,23 +29,18 @@ const EMP_JOIN = `
   LEFT JOIN departments d ON d.id = e.department_id
   LEFT JOIN shifts      s ON s.id = e.shift_id`;
 
-function getEmployee(id) {
-  return db.prepare(`SELECT ${employeeCols} ${EMP_JOIN} WHERE e.id = ?`).get(id);
-}
+const getEmployee = (id) =>
+  one(`SELECT ${employeeCols} ${EMP_JOIN} WHERE e.id = ?`, id);
 
-function getEmployeeByEmail(email) {
-  return db.prepare(
-    `SELECT e.*, d.name AS department_name, s.name AS shift_name ${EMP_JOIN}
-     WHERE e.email = ? COLLATE NOCASE`,
-  ).get(email);
-}
+// Postgres has no COLLATE NOCASE; LOWER() on both sides is the portable form,
+// and the schema carries matching functional indexes so it stays an index scan.
+const getEmployeeByEmail = (email) => one(
+  `SELECT e.*, d.name AS department_name, s.name AS shift_name ${EMP_JOIN}
+   WHERE LOWER(e.email) = LOWER(?)`, email);
 
-function getEmployeeByCode(code) {
-  return db.prepare(
-    `SELECT e.*, d.name AS department_name, s.name AS shift_name ${EMP_JOIN}
-     WHERE e.emp_code = ? COLLATE NOCASE`,
-  ).get(code);
-}
+const getEmployeeByCode = (code) => one(
+  `SELECT e.*, d.name AS department_name, s.name AS shift_name ${EMP_JOIN}
+   WHERE LOWER(e.emp_code) = LOWER(?)`, code);
 
 function listEmployees({ includeInactive = false, departmentId = null, managerId = null } = {}) {
   const where = [];
@@ -49,32 +48,45 @@ function listEmployees({ includeInactive = false, departmentId = null, managerId
   if (!includeInactive) where.push('e.active = 1');
   if (departmentId) { where.push('e.department_id = ?'); args.push(departmentId); }
   if (managerId) { where.push('e.manager_id = ?'); args.push(managerId); }
-  const sql = `SELECT ${employeeCols} ${EMP_JOIN}
-               ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-               ORDER BY e.active DESC, e.name`;
-  return db.prepare(sql).all(...args);
+  return all(
+    `SELECT ${employeeCols} ${EMP_JOIN}
+     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+     ORDER BY e.active DESC, e.name`, ...args);
 }
 
-const listDepartments = () => db.prepare(
-  `SELECT d.*, (SELECT COUNT(*) FROM employees e
-                WHERE e.department_id = d.id AND e.active = 1) AS headcount
-   FROM departments d ORDER BY d.name`).all();
+// Headcount by LEFT JOIN rather than a correlated subquery: one pass instead
+// of one query per row, and no reliance on an outer alias being visible from
+// inside a subquery.
+const listDepartments = () => all(
+  `SELECT d.id, d.name, d.created_at, COUNT(e.id) AS headcount
+   FROM departments d
+   LEFT JOIN employees e ON e.department_id = d.id AND e.active = 1
+   GROUP BY d.id, d.name, d.created_at
+   ORDER BY d.name`);
 
-const listShifts = () => db.prepare(
-  `SELECT s.*, (SELECT COUNT(*) FROM employees e
-                WHERE e.shift_id = s.id AND e.active = 1) AS headcount
-   FROM shifts s ORDER BY s.name`).all();
+const listShifts = () => all(
+  `SELECT s.id, s.name, s.start_time, s.end_time, s.grace_minutes,
+          s.break_minutes, s.break_after_minutes, s.half_day_minutes,
+          s.min_present_minutes, s.overtime_after_minutes,
+          s.overtime_grace_minutes, s.weekly_off, s.created_at,
+          COUNT(e.id) AS headcount
+   FROM shifts s
+   LEFT JOIN employees e ON e.shift_id = s.id AND e.active = 1
+   GROUP BY s.id, s.name, s.start_time, s.end_time, s.grace_minutes,
+            s.break_minutes, s.break_after_minutes, s.half_day_minutes,
+            s.min_present_minutes, s.overtime_after_minutes,
+            s.overtime_grace_minutes, s.weekly_off, s.created_at
+   ORDER BY s.name`);
 
-const getShift = (id) => db.prepare('SELECT * FROM shifts WHERE id = ?').get(id);
+const getShift = (id) => one('SELECT * FROM shifts WHERE id = ?', id);
 
-const listHolidays = (from, to) => db.prepare(
-  'SELECT * FROM holidays WHERE work_date BETWEEN ? AND ? ORDER BY work_date')
-  .all(from, to);
+const listHolidays = (from, to) => all(
+  'SELECT * FROM holidays WHERE work_date BETWEEN ? AND ? ORDER BY work_date', from, to);
 
 /** Holidays in a range keyed by date, for O(1) lookup while evaluating. */
-function holidayMap(from, to) {
+async function holidayMap(from, to) {
   const m = new Map();
-  for (const h of listHolidays(from, to)) m.set(h.work_date, h);
+  for (const h of await listHolidays(from, to)) m.set(h.work_date, h);
   return m;
 }
 
@@ -85,14 +97,18 @@ function holidayMap(from, to) {
  * schedule. Used to decide which business date the org-wide screens default
  * to, since the register and dashboard cover everyone at once.
  */
-function prevailingShift() {
-  return db.prepare(`
-    SELECT s.* FROM shifts s
-    JOIN employees e ON e.shift_id = s.id AND e.active = 1
-    GROUP BY s.id
-    ORDER BY COUNT(*) DESC, s.id
-    LIMIT 1`).get() || null;
-}
+// Grouped on employees alone, then the shift is looked up. Selecting s.* while
+// grouping by s.id leans on Postgres's functional-dependency rule, which is
+// valid but needlessly clever - and not portable.
+const prevailingShift = async () => (await one(`
+  SELECT * FROM shifts
+  WHERE id = (
+    SELECT e.shift_id FROM employees e
+    WHERE e.active = 1 AND e.shift_id IS NOT NULL
+    GROUP BY e.shift_id
+    ORDER BY COUNT(*) DESC, e.shift_id
+    LIMIT 1
+  )`)) || null;
 
 /**
  * The business date currently in progress, org-wide.
@@ -103,62 +119,62 @@ function prevailingShift() {
  * register to the calendar date would show an empty day to a room full of
  * people who are standing at their desks.
  */
-function currentBusinessDate(stamp = null) {
-  return resolveWorkDate(prevailingShift(), stamp || isoStamp());
+async function currentBusinessDate(stamp = null) {
+  return resolveWorkDate(await prevailingShift(), stamp || isoStamp());
 }
 
 /** The business date currently in progress for one employee's own shift. */
-function employeeBusinessDate(employeeId, stamp = null) {
-  const emp = db.prepare('SELECT shift_id FROM employees WHERE id = ?').get(employeeId);
-  const shift = emp && emp.shift_id ? getShift(emp.shift_id) : null;
+async function employeeBusinessDate(employeeId, stamp = null) {
+  const emp = await one('SELECT shift_id FROM employees WHERE id = ?', employeeId);
+  const shift = emp && emp.shift_id ? await getShift(emp.shift_id) : null;
   return resolveWorkDate(shift, stamp || isoStamp());
 }
 
 // --- punching --------------------------------------------------------------
 
-/** The employee's most recent punch on or around a business date. */
-function lastPunch(employeeId, workDate) {
-  return db.prepare(
-    `SELECT * FROM punches
-     WHERE employee_id = ? AND work_date = ?
-     ORDER BY punched_at DESC, id DESC LIMIT 1`,
-  ).get(employeeId, workDate);
-}
+/** The employee's most recent punch on a business date. */
+const lastPunch = (employeeId, workDate, q = null) => (q || { one }).one(
+  `SELECT * FROM punches
+   WHERE employee_id = ? AND work_date = ?
+   ORDER BY punched_at DESC, id DESC LIMIT 1`, employeeId, workDate);
 
 /** What a check-in/out button should do next for this employee right now. */
-function punchState(employeeId) {
-  const emp = db.prepare('SELECT shift_id FROM employees WHERE id = ?').get(employeeId);
-  const shift = emp && emp.shift_id ? getShift(emp.shift_id) : null;
+async function punchState(employeeId) {
+  const emp = await one('SELECT shift_id FROM employees WHERE id = ?', employeeId);
+  const shift = emp && emp.shift_id ? await getShift(emp.shift_id) : null;
   const stamp = isoStamp();
   const workDate = resolveWorkDate(shift, stamp);
-  const last = lastPunch(employeeId, workDate);
-  return {
-    workDate,
-    next: !last || last.kind === 'out' ? 'in' : 'out',
-    last,
-  };
+  const last = await lastPunch(employeeId, workDate);
+  return { workDate, next: !last || last.kind === 'out' ? 'in' : 'out', last };
 }
 
 /**
  * Record a punch.
  *
- * `expectKind` guards against a double submit: if the state already moved on
- * (two tabs, a double-tap on the kiosk), the second write is rejected rather
- * than silently creating a bogus session.
+ * Guards against a double submit: if the state already moved on (two tabs, a
+ * double-tap on the kiosk), the second write is rejected rather than silently
+ * creating a bogus session.
+ *
+ * `q` lets a caller pass transaction-bound helpers so several punches commit
+ * together; it defaults to the pool.
  */
-function recordPunch({ employeeId, kind = null, source = 'web', note = null,
-                       actorId = null, stamp = null, workDate = null }) {
-  const emp = db.prepare('SELECT * FROM employees WHERE id = ?').get(employeeId);
+async function recordPunch({ employeeId, kind = null, source = 'web', note = null,
+                             actorId = null, stamp = null, workDate = null }, q = null) {
+  const db = q || { all, one, run };
+
+  const emp = await db.one('SELECT * FROM employees WHERE id = ?', employeeId);
   if (!emp) throw Object.assign(new Error('No such employee'), { status: 404 });
   if (!emp.active) {
     throw Object.assign(new Error('This employee is inactive and cannot punch'),
       { status: 400 });
   }
 
-  const shift = emp.shift_id ? getShift(emp.shift_id) : null;
+  const shift = emp.shift_id
+    ? await db.one('SELECT * FROM shifts WHERE id = ?', emp.shift_id)
+    : null;
   const at = stamp || isoStamp();
   const wd = workDate || resolveWorkDate(shift, at);
-  const last = lastPunch(employeeId, wd);
+  const last = await lastPunch(employeeId, wd, db);
   const expected = !last || last.kind === 'out' ? 'in' : 'out';
   const k = kind || expected;
 
@@ -179,42 +195,44 @@ function recordPunch({ employeeId, kind = null, source = 'web', note = null,
     );
   }
 
-  const info = db.prepare(
-    `INSERT INTO punches (employee_id, punched_at, work_date, kind, source, note, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(employeeId, at, wd, k, source, note, actorId);
+  const res = await db.run(
+    `INSERT INTO punches
+       (employee_id, punched_at, work_date, kind, source, note, created_by, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     RETURNING id`,
+    employeeId, at, wd, k, source, note, actorId, nowStamp());
 
   if (source === 'admin') {
-    audit(actorId, 'punch.insert', `employee:${employeeId}`,
+    await audit(actorId, 'punch.insert', `employee:${employeeId}`,
       `${k} at ${at} on ${wd}${note ? ' - ' + note : ''}`);
   }
-  return { id: info.lastInsertRowid, kind: k, punched_at: at, work_date: wd };
+  return { id: res.rows[0].id, kind: k, punched_at: at, work_date: wd };
 }
 
-function deletePunch(punchId, actorId) {
-  const row = db.prepare('SELECT * FROM punches WHERE id = ?').get(punchId);
+async function deletePunch(punchId, actorId) {
+  const row = await one('SELECT * FROM punches WHERE id = ?', punchId);
   if (!row) throw Object.assign(new Error('No such punch'), { status: 404 });
-  db.prepare('DELETE FROM punches WHERE id = ?').run(punchId);
-  audit(actorId, 'punch.delete', `employee:${row.employee_id}`,
+  await run('DELETE FROM punches WHERE id = ?', punchId);
+  await audit(actorId, 'punch.delete', `employee:${row.employee_id}`,
     `${row.kind} at ${row.punched_at} on ${row.work_date}`);
   return row;
 }
 
-function setOverride({ employeeId, workDate, status, note, actorId }) {
+async function setOverride({ employeeId, workDate, status, note, actorId }) {
   if (!status) {
-    db.prepare('DELETE FROM day_overrides WHERE employee_id = ? AND work_date = ?')
-      .run(employeeId, workDate);
-    audit(actorId, 'override.clear', `employee:${employeeId}`, workDate);
+    await run('DELETE FROM day_overrides WHERE employee_id = ? AND work_date = ?',
+      employeeId, workDate);
+    await audit(actorId, 'override.clear', `employee:${employeeId}`, workDate);
     return null;
   }
-  db.prepare(
-    `INSERT INTO day_overrides (employee_id, work_date, status, note, set_by)
-     VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(employee_id, work_date) DO UPDATE SET
-       status = excluded.status, note = excluded.note,
-       set_by = excluded.set_by, set_at = datetime('now')`,
-  ).run(employeeId, workDate, status, note || null, actorId);
-  audit(actorId, 'override.set', `employee:${employeeId}`,
+  await run(
+    `INSERT INTO day_overrides (employee_id, work_date, status, note, set_by, set_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (employee_id, work_date) DO UPDATE SET
+       status = EXCLUDED.status, note = EXCLUDED.note,
+       set_by = EXCLUDED.set_by, set_at = EXCLUDED.set_at`,
+    employeeId, workDate, status, note || null, actorId, nowStamp());
+  await audit(actorId, 'override.set', `employee:${employeeId}`,
     `${workDate} -> ${status}${note ? ' - ' + note : ''}`);
   return { employeeId, workDate, status };
 }
@@ -222,21 +240,21 @@ function setOverride({ employeeId, workDate, status, note, actorId }) {
 // --- derived views ---------------------------------------------------------
 
 /** Evaluated days for one employee over an inclusive date range. */
-function employeeDays(employeeId, from, to) {
-  const emp = db.prepare(
-    'SELECT id, shift_id, joined_on FROM employees WHERE id = ?').get(employeeId);
+async function employeeDays(employeeId, from, to) {
+  const emp = await one(
+    'SELECT id, shift_id, joined_on FROM employees WHERE id = ?', employeeId);
   if (!emp) return null;
 
-  const shift = emp.shift_id ? getShift(emp.shift_id) : null;
+  const shift = emp.shift_id ? await getShift(emp.shift_id) : null;
 
-  const punches = db.prepare(
-    `SELECT * FROM punches
-     WHERE employee_id = ? AND work_date BETWEEN ? AND ?
-     ORDER BY punched_at`).all(employeeId, from, to);
-
-  const overrides = db.prepare(
-    `SELECT * FROM day_overrides
-     WHERE employee_id = ? AND work_date BETWEEN ? AND ?`).all(employeeId, from, to);
+  const [punches, overrides, hol] = await Promise.all([
+    all(`SELECT * FROM punches
+         WHERE employee_id = ? AND work_date BETWEEN ? AND ?
+         ORDER BY punched_at`, employeeId, from, to),
+    all(`SELECT * FROM day_overrides
+         WHERE employee_id = ? AND work_date BETWEEN ? AND ?`, employeeId, from, to),
+    holidayMap(from, to),
+  ]);
 
   const byDate = new Map();
   for (const p of punches) {
@@ -244,12 +262,11 @@ function employeeDays(employeeId, from, to) {
     byDate.get(p.work_date).push(p);
   }
   const ovr = new Map(overrides.map((o) => [o.work_date, o]));
-  const hol = holidayMap(from, to);
-  const nowStamp = isoStamp();
+  const stamp = isoStamp();
   // The night currently in progress for THIS employee's shift. Comparing the
   // calendar date instead would, at 00:06 on a 20:00-05:00 shift, treat a
   // colleague who is standing at their desk as a forgotten check-out.
-  const liveDate = resolveWorkDate(shift, nowStamp);
+  const liveDate = resolveWorkDate(shift, stamp);
 
   const days = dateRange(from, to).map((date) => evaluateDay({
     date,
@@ -257,23 +274,23 @@ function employeeDays(employeeId, from, to) {
     punches: byDate.get(date) || [],
     override: ovr.get(date) || null,
     holiday: hol.get(date) || null,
-    nowStamp: date === liveDate ? nowStamp : null,
+    nowStamp: date === liveDate ? stamp : null,
     joinedOn: emp.joined_on,
   }));
 
-  return { employee: getEmployee(employeeId), days, totals: summarise(days) };
+  return { employee: await getEmployee(employeeId), days, totals: summarise(days) };
 }
 
 /** One evaluated day for every employee - the daily register. */
-function dayRegister(date, { includeInactive = false, departmentId = null } = {}) {
-  const employees = listEmployees({ includeInactive, departmentId });
-  const nowStamp = isoStamp();
-  const hol = holidayMap(date, date);
-
-  const punches = db.prepare(
-    'SELECT * FROM punches WHERE work_date = ? ORDER BY punched_at').all(date);
-  const overrides = db.prepare(
-    'SELECT * FROM day_overrides WHERE work_date = ?').all(date);
+async function dayRegister(date, { includeInactive = false, departmentId = null } = {}) {
+  const [employees, punches, overrides, hol, shiftList] = await Promise.all([
+    listEmployees({ includeInactive, departmentId }),
+    all('SELECT * FROM punches WHERE work_date = ? ORDER BY punched_at', date),
+    all('SELECT * FROM day_overrides WHERE work_date = ?', date),
+    holidayMap(date, date),
+    listShifts(),
+  ]);
+  const stamp = isoStamp();
 
   const byEmp = new Map();
   for (const p of punches) {
@@ -281,14 +298,14 @@ function dayRegister(date, { includeInactive = false, departmentId = null } = {}
     byEmp.get(p.employee_id).push(p);
   }
   const ovr = new Map(overrides.map((o) => [o.employee_id, o]));
-  const shifts = new Map(listShifts().map((s) => [s.id, s]));
+  const shifts = new Map(shiftList.map((s) => [s.id, s]));
 
   const rows = employees.map((e) => {
     const shift = e.shift_id ? shifts.get(e.shift_id) : null;
     // Resolved per employee: staff on different shifts are mid-shift at
     // different moments, and only the one whose night is actually running
     // should have its open check-in counted as time at work.
-    const live = date === resolveWorkDate(shift, nowStamp) ? nowStamp : null;
+    const live = date === resolveWorkDate(shift, stamp) ? stamp : null;
     const day = evaluateDay({
       date,
       shift,
@@ -305,13 +322,14 @@ function dayRegister(date, { includeInactive = false, departmentId = null } = {}
 }
 
 /** Monthly totals per employee - the payroll export shape. */
-function monthlyReport(anyDateInMonth, { departmentId = null, includeInactive = false } = {}) {
+async function monthlyReport(anyDateInMonth, { departmentId = null, includeInactive = false } = {}) {
   const { from, to } = monthBounds(anyDateInMonth);
-  const employees = listEmployees({ includeInactive, departmentId });
-  const rows = employees.map((e) => {
-    const r = employeeDays(e.id, from, to);
-    return { employee: e, totals: r.totals, days: r.days };
-  });
+  const employees = await listEmployees({ includeInactive, departmentId });
+  const rows = [];
+  for (const e of employees) {
+    const r = await employeeDays(e.id, from, to);
+    rows.push({ employee: e, totals: r.totals, days: r.days });
+  }
   return { from, to, rows };
 }
 
@@ -322,32 +340,30 @@ function monthlyReport(anyDateInMonth, { departmentId = null, includeInactive = 
  * Mon-Fri night shift, Monday's comparison is the previous Friday, not Sunday,
  * which would otherwise always read as a collapse to zero.
  */
-function previousWorkingDate(date, maxBack = 10) {
-  const shift = prevailingShift();
+async function previousWorkingDate(date, maxBack = 10) {
+  const shift = await prevailingShift();
   const offs = shift
     ? new Set(String(shift.weekly_off || '').split(',').map((n) => parseInt(n, 10)))
     : new Set();
   let d = date;
   for (let i = 0; i < maxBack; i++) {
     d = addDays(d, -1);
-    const isHoliday = db.prepare('SELECT 1 FROM holidays WHERE work_date = ?').get(d);
+    const isHoliday = await one('SELECT 1 FROM holidays WHERE work_date = ?', d);
     if (!offs.has(isoWeekday(d)) && !isHoliday) return d;
   }
   return addDays(date, -1);
 }
 
-/**
- * Counts for the nav badges. Kept cheap: this runs on every page render.
- */
-function navCounts() {
-  const today = currentBusinessDate();
-  const reg = dayRegister(today);
+/** Counts for the nav badges. Runs on every staff page render. */
+async function navCounts() {
+  const today = await currentBusinessDate();
+  const reg = await dayRegister(today);
   const { from, to } = monthBounds(today);
 
   // Only days that have finished can be exceptions.
   let exceptions = 0;
-  for (const e of listEmployees()) {
-    const r = employeeDays(e.id, from, to);
+  for (const e of await listEmployees()) {
+    const r = await employeeDays(e.id, from, to);
     for (const d of r.days) {
       if (d.date >= today) continue;
       if (d.problems.length || (d.status === 'absent' && !d.isOff)) exceptions += 1;
@@ -360,14 +376,11 @@ function navCounts() {
   };
 }
 
-/**
- * Today's figures alongside the previous working night, for the summary cards.
- */
-function dashboard(date = null) {
-  const day = date || currentBusinessDate();
-  const prev = previousWorkingDate(day);
-  const now = dayRegister(day);
-  const before = dayRegister(prev);
+/** Today's figures alongside the previous working night, for the summary cards. */
+async function dashboard(date = null) {
+  const day = date || await currentBusinessDate();
+  const prev = await previousWorkingDate(day);
+  const [now, before] = await Promise.all([dayRegister(day), dayRegister(prev)]);
 
   const shape = (reg) => ({
     onTime: reg.rows.filter((r) => r.countsPresent && !r.lateMinutes).length,
@@ -403,37 +416,38 @@ function dashboard(date = null) {
  * so the window has an explicit start, an explicit on/off switch, and is meant
  * to be closed once the history is filled in.
  */
-function selfEntryWindow() {
-  return {
-    enabled: getSetting('self_entry_enabled', '0') === '1',
-    from: getSetting('self_entry_from', '') || null,
-    to: currentBusinessDate(),
-  };
+async function selfEntryWindow() {
+  const [enabled, from, to] = await Promise.all([
+    getSetting('self_entry_enabled', '0'),
+    getSetting('self_entry_from', ''),
+    currentBusinessDate(),
+  ]);
+  return { enabled: enabled === '1', from: from || null, to };
 }
 
-function setSelfEntryWindow({ enabled, from }, actorId) {
-  setSetting('self_entry_enabled', enabled ? '1' : '0');
-  if (from) setSetting('self_entry_from', from);
-  audit(actorId, 'settings.self_entry', null,
+async function setSelfEntryWindow({ enabled, from }, actorId) {
+  await setSetting('self_entry_enabled', enabled ? '1' : '0');
+  if (from) await setSetting('self_entry_from', from);
+  await audit(actorId, 'settings.self_entry', null,
     `${enabled ? 'opened' : 'closed'}${from ? ' from ' + from : ''}`);
   return selfEntryWindow();
 }
 
 /** Why a given night may or may not be self-filled. Null means it may. */
-function selfEntryBlocker(employeeId, workDate) {
-  const w = selfEntryWindow();
+async function selfEntryBlocker(employeeId, workDate) {
+  const w = await selfEntryWindow();
   if (!w.enabled) return 'Manual entry is currently closed. Ask HR to reopen it.';
   if (!w.from) return 'No start date has been set for manual entry.';
   if (workDate < w.from) return `Manual entry only covers ${w.from} onwards.`;
   if (workDate > w.to) return 'That night has not happened yet.';
 
-  const emp = db.prepare('SELECT joined_on FROM employees WHERE id = ?').get(employeeId);
+  const emp = await one('SELECT joined_on FROM employees WHERE id = ?', employeeId);
   if (emp && workDate < emp.joined_on) return 'That is before your joining date.';
 
   // A night HR has already ruled on is not the employee's to overwrite.
-  const ovr = db.prepare(
-    'SELECT status FROM day_overrides WHERE employee_id = ? AND work_date = ?')
-    .get(employeeId, workDate);
+  const ovr = await one(
+    'SELECT status FROM day_overrides WHERE employee_id = ? AND work_date = ?',
+    employeeId, workDate);
   if (ovr) return `HR has already marked that night as ${ovr.status}.`;
   return null;
 }
@@ -444,14 +458,14 @@ function selfEntryBlocker(employeeId, workDate) {
  * Both punches are written with source 'self' so the register can show at a
  * glance which times were reported after the fact rather than captured live.
  */
-function recordSelfEntry({ employeeId, workDate, inTime, outTime, note, actorId }) {
-  const blocker = selfEntryBlocker(employeeId, workDate);
+async function recordSelfEntry({ employeeId, workDate, inTime, outTime, note, actorId }) {
+  const blocker = await selfEntryBlocker(employeeId, workDate);
   if (blocker) throw Object.assign(new Error(blocker), { status: 403 });
 
-  const already = db.prepare(
-    'SELECT COUNT(*) AS n FROM punches WHERE employee_id = ? AND work_date = ?')
-    .get(employeeId, workDate).n;
-  if (already) {
+  const already = await one(
+    'SELECT COUNT(*) AS n FROM punches WHERE employee_id = ? AND work_date = ?',
+    employeeId, workDate);
+  if (already && Number(already.n) > 0) {
     throw Object.assign(
       new Error('That night already has times recorded. Ask HR to correct it.'),
       { status: 409 });
@@ -463,8 +477,8 @@ function recordSelfEntry({ employeeId, workDate, inTime, outTime, note, actorId 
     throw Object.assign(new Error('Enter the end time as HH:MM'), { status: 400 });
   }
 
-  const emp = db.prepare('SELECT shift_id FROM employees WHERE id = ?').get(employeeId);
-  const shift = emp && emp.shift_id ? getShift(emp.shift_id) : null;
+  const emp = await one('SELECT shift_id FROM employees WHERE id = ?', employeeId);
+  const shift = emp && emp.shift_id ? await getShift(emp.shift_id) : null;
 
   // On an overnight shift the end time belongs to the following calendar day,
   // while both punches still file against the night that started.
@@ -474,32 +488,33 @@ function recordSelfEntry({ employeeId, workDate, inTime, outTime, note, actorId 
     : workDate;
 
   const reason = (note || '').trim() || 'Added by the employee';
-  const written = [];
 
-  db.transaction(() => {
-    written.push(recordPunch({
+  const written = await tx(async (t) => {
+    const out = [];
+    out.push(await recordPunch({
       employeeId, kind: 'in', source: 'self', note: reason, actorId,
       stamp: `${workDate} ${inTime}:00`, workDate,
-    }));
+    }, t));
     if (outTime) {
-      written.push(recordPunch({
+      out.push(await recordPunch({
         employeeId, kind: 'out', source: 'self', note: reason, actorId,
         stamp: `${outDate} ${outTime}:00`, workDate,
-      }));
+      }, t));
     }
-  })();
+    return out;
+  });
 
-  audit(actorId, 'punch.self', `employee:${employeeId}`,
+  await audit(actorId, 'punch.self', `employee:${employeeId}`,
     `${workDate} ${inTime}${outTime ? ' - ' + outTime : ' (no end time)'} - ${reason}`);
   return written;
 }
 
 /** The nights an employee may still fill in, newest first. */
-function selfEntryNights(employeeId) {
-  const w = selfEntryWindow();
+async function selfEntryNights(employeeId) {
+  const w = await selfEntryWindow();
   if (!w.enabled || !w.from) return { window: w, nights: [] };
 
-  const data = employeeDays(employeeId, w.from, w.to);
+  const data = await employeeDays(employeeId, w.from, w.to);
   if (!data) return { window: w, nights: [] };
 
   const nights = data.days
@@ -511,24 +526,6 @@ function selfEntryNights(employeeId) {
   return { window: w, nights, employee: data.employee };
 }
 
-/** Headline numbers for the admin dashboard. */
-function todaySnapshot() {
-  const today = currentBusinessDate();
-  const reg = dayRegister(today);
-  const onPremise = reg.rows.filter((r) => r.stillIn).length;
-  return {
-    date: today,
-    headcount: reg.rows.length,
-    present: reg.totals.present,
-    late: reg.totals.late,
-    absent: reg.totals.absent,
-    leave: reg.totals.leave,
-    onPremise,
-    problems: reg.rows.filter((r) => r.problems.length),
-    rows: reg.rows,
-  };
-}
-
 /**
  * Apply a validated import plan in one transaction.
  *
@@ -537,61 +534,52 @@ function todaySnapshot() {
  * file are created first, then employees, then manager links - managers have
  * to exist as rows before anyone can point at them.
  */
-function applyImport(items, actorId, { setPassword, setPin }) {
-  const insert = db.prepare(
-    `INSERT INTO employees
-       (emp_code, name, email, role, department_id, shift_id, joined_on, active)
-     VALUES (@emp_code, @name, @email, @role, @department_id, @shift_id, @joined_on, 1)`);
-  const newDept = db.prepare('INSERT INTO departments (name) VALUES (?)');
-  const findDept = db.prepare('SELECT id FROM departments WHERE name = ? COLLATE NOCASE');
-  const findCode = db.prepare('SELECT id FROM employees WHERE emp_code = ? COLLATE NOCASE');
-  const setManager = db.prepare('UPDATE employees SET manager_id = ? WHERE id = ?');
-
-  const run = db.transaction(() => {
-    const created = [];
-
+async function applyImport(items, actorId, { setPassword, setPin }) {
+  const created = await tx(async (t) => {
+    const made = [];
     for (const it of items) {
       let departmentId = it.departmentId;
       if (!departmentId && it.departmentName) {
-        const found = findDept.get(it.departmentName);
+        const found = await t.one(
+          'SELECT id FROM departments WHERE LOWER(name) = LOWER(?)', it.departmentName);
         departmentId = found
           ? found.id
-          : Number(newDept.run(it.departmentName).lastInsertRowid);
+          : (await t.run(
+            'INSERT INTO departments (name, created_at) VALUES (?, ?) RETURNING id',
+            it.departmentName, nowStamp())).rows[0].id;
       }
 
-      const info = insert.run({
-        emp_code: it.emp_code,
-        name: it.name,
-        email: it.email,
-        role: it.role,
-        department_id: departmentId,
-        shift_id: it.shiftId,
-        joined_on: it.joined_on,
-      });
-      const id = Number(info.lastInsertRowid);
+      const res = await t.run(
+        `INSERT INTO employees
+           (emp_code, name, email, role, department_id, shift_id, joined_on, active, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+         RETURNING id`,
+        it.emp_code, it.name, it.email, it.role, departmentId, it.shiftId,
+        it.joined_on, nowStamp());
+      const id = res.rows[0].id;
 
-      if (it.password) setPassword(id, it.password);
-      if (it.pin) setPin(id, it.pin);
+      if (it.password) await setPassword(id, it.password, t);
+      if (it.pin) await setPin(id, it.pin, t);
 
-      created.push({ ...it, id, departmentId });
+      made.push({ ...it, id, departmentId });
     }
 
-    for (const c of created) {
+    for (const c of made) {
       if (!c.managerCode) continue;
-      const mgr = findCode.get(c.managerCode);
-      if (mgr) setManager.run(mgr.id, c.id);
+      const mgr = await t.one(
+        'SELECT id FROM employees WHERE LOWER(emp_code) = LOWER(?)', c.managerCode);
+      if (mgr) await t.run('UPDATE employees SET manager_id = ? WHERE id = ?', mgr.id, c.id);
     }
-
-    audit(actorId, 'employee.import', null, `${created.length} employee(s) imported`);
-    return created;
+    return made;
   });
 
-  return run();
+  await audit(actorId, 'employee.import', null, `${created.length} employee(s) imported`);
+  return created;
 }
 
 /** Codes and emails already taken, for validating an import against. */
-function existingIdentifiers() {
-  const rows = db.prepare('SELECT emp_code, email FROM employees').all();
+async function existingIdentifiers() {
+  const rows = await all('SELECT emp_code, email FROM employees');
   return {
     codes: new Set(rows.map((r) => r.emp_code)),
     emails: new Set(rows.filter((r) => r.email).map((r) => r.email.toLowerCase())),
@@ -602,10 +590,10 @@ module.exports = {
   getEmployee, getEmployeeByEmail, getEmployeeByCode, listEmployees,
   listDepartments, listShifts, getShift, listHolidays,
   resolveWorkDate, punchState, recordPunch, deletePunch, setOverride,
-  employeeDays, dayRegister, monthlyReport, todaySnapshot,
-  applyImport, existingIdentifiers,
+  employeeDays, dayRegister, monthlyReport,
   prevailingShift, currentBusinessDate, employeeBusinessDate,
   previousWorkingDate, navCounts, dashboard,
   selfEntryWindow, setSelfEntryWindow, selfEntryBlocker,
   recordSelfEntry, selfEntryNights,
+  applyImport, existingIdentifiers,
 };

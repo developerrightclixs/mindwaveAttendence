@@ -1,7 +1,7 @@
 'use strict';
 const express = require('express');
 const { authenticate, setPassword, verify } = require('../auth');
-const { db, audit } = require('../db');
+const { one, audit } = require('../db');
 
 const router = express.Router();
 
@@ -15,11 +15,11 @@ router.get('/login', (req, res) => {
   res.render('login', { title: 'Sign in', error: null, email: '', next: req.query.next || '' });
 });
 
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   const { email, password } = req.body;
-  const emp = authenticate(email, password);
+  const emp = await authenticate(email, password);
   if (!emp) {
-    audit(null, 'login.fail', String(email || '').slice(0, 120), null);
+    await audit(null, 'login.fail', String(email || '').slice(0, 120), null);
     return res.status(401).render('login', {
       title: 'Sign in',
       error: 'Wrong email or password.',
@@ -29,18 +29,18 @@ router.post('/login', (req, res) => {
   }
   // New session id on login so a fixated pre-login cookie cannot be reused.
   const target = safeNext(req.body.next);
-  req.session.regenerate((err) => {
+  req.session.regenerate(async (err) => {
     if (err) throw err;
     req.session.userId = emp.id;
-    audit(emp.id, 'login.ok', null, null);
+    await audit(emp.id, 'login.ok', null, null);
     res.redirect(emp.role === 'employee' ? target : (target === '/' ? '/admin' : target));
   });
 });
 
 router.post('/logout', (req, res) => {
   const id = req.user && req.user.id;
-  req.session.destroy(() => {
-    if (id) audit(id, 'logout', null, null);
+  req.session.destroy(async () => {
+    if (id) await audit(id, 'logout', null, null);
     res.redirect('/login');
   });
 });
@@ -50,10 +50,10 @@ router.get('/password', (req, res) => {
   res.render('password', { title: 'Change password', error: null });
 });
 
-router.post('/password', (req, res) => {
+router.post('/password', async (req, res) => {
   if (!req.user) return res.redirect('/login');
   const { current, next: newPass, confirm } = req.body;
-  const row = db.prepare('SELECT password_hash FROM employees WHERE id = ?').get(req.user.id);
+  const row = await one('SELECT password_hash FROM employees WHERE id = ?', req.user.id);
 
   const fail = (error) => res.status(400).render('password', {
     title: 'Change password', error,
@@ -65,8 +65,8 @@ router.post('/password', (req, res) => {
   }
   if (newPass !== confirm) return fail('The two new passwords do not match.');
 
-  setPassword(req.user.id, newPass);
-  audit(req.user.id, 'password.change', null, null);
+  await setPassword(req.user.id, newPass);
+  await audit(req.user.id, 'password.change', null, null);
   res.flash('ok', 'Password changed.');
   res.redirect('/');
 });
