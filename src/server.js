@@ -22,6 +22,13 @@ const PORT = process.env.PORT || 3000;
 // Set HOST to the office LAN address (e.g. 192.168.18.53) to pin it down.
 const HOST = process.env.HOST || '0.0.0.0';
 
+// Session lifetimes. The short one covers a single shift plus slack, so an
+// unattended browser does not stay signed in indefinitely. "Remember me"
+// swaps in the long one at login; `rolling` then keeps extending whichever
+// the session was given, because the cookie settings are stored per session.
+const SESSION_HOURS = 12;
+const REMEMBER_DAYS = Number(process.env.REMEMBER_ME_DAYS || 30);
+
 // ---------------------------------------------------------------------------
 // Session secret
 // ---------------------------------------------------------------------------
@@ -124,7 +131,7 @@ app.use(async (req, res, next) => {
       cookie: {
         httpOnly: true,
         sameSite: 'lax',
-        maxAge: 12 * 60 * 60 * 1000,
+        maxAge: SESSION_HOURS * 60 * 60 * 1000,
         // Plain HTTP on an office LAN by default; set SECURE_COOKIES=1 once a
         // TLS terminator is in front of it.
         secure: process.env.SECURE_COOKIES === '1',
@@ -153,6 +160,7 @@ app.use(async (req, res, next) => {
   res.locals.query = req.query;
   res.locals.calendarToday = fmt.isoDate();
   res.locals.today = fmt.isoDate();
+  res.locals.rememberDays = REMEMBER_DAYS;
   res.locals.navCounts = null;
   res.locals.flash = null;
   // The business date in progress, not the calendar date - on a night shift

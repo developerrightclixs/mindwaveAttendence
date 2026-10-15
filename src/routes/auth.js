@@ -5,6 +5,9 @@ const { one, audit } = require('../db');
 
 const router = express.Router();
 
+// Kept in step with the cookie default in server.js.
+const REMEMBER_DAYS = Number(process.env.REMEMBER_ME_DAYS || 30);
+
 /** Only allow redirects back to our own paths. */
 function safeNext(next) {
   return typeof next === 'string' && /^\/[^/\\]/.test(next) ? next : '/';
@@ -12,7 +15,10 @@ function safeNext(next) {
 
 router.get('/login', (req, res) => {
   if (req.user) return res.redirect('/');
-  res.render('login', { title: 'Sign in', error: null, email: '', next: req.query.next || '' });
+  res.render('login', {
+    title: 'Sign in', error: null, email: '', remember: false,
+    next: req.query.next || '',
+  });
 });
 
 router.post('/login', async (req, res) => {
@@ -25,14 +31,23 @@ router.post('/login', async (req, res) => {
       error: 'Wrong email or password.',
       email: String(email || ''),
       next: req.body.next || '',
+      remember: !!req.body.remember,
     });
   }
   // New session id on login so a fixated pre-login cookie cannot be reused.
   const target = safeNext(req.body.next);
+  const remember = !!req.body.remember;
+
   req.session.regenerate(async (err) => {
     if (err) throw err;
     req.session.userId = emp.id;
-    await audit(emp.id, 'login.ok', null, null);
+    if (remember) {
+      // Stored on the session, so `rolling` keeps renewing this longer window
+      // rather than snapping back to the default on the next request.
+      req.session.remember = true;
+      req.session.cookie.maxAge = REMEMBER_DAYS * 24 * 60 * 60 * 1000;
+    }
+    await audit(emp.id, 'login.ok', null, remember ? 'remembered on this device' : null);
     res.redirect(emp.role === 'employee' ? target : (target === '/' ? '/admin' : target));
   });
 });
