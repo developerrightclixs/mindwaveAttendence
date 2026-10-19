@@ -314,6 +314,7 @@ async function evaluateRange(employees, from, to) {
       override: ovr.get(key(e.id, date)) || null,
       holiday: hol.get(date) || null,
       nowStamp: date === liveDate ? stamp : null,
+      todayDate: liveDate,
       joinedOn: e.joined_on,
       exempt: !!e.attendance_exempt,
     })));
@@ -362,7 +363,8 @@ async function buildDayRegister(date, { includeInactive = false, departmentId = 
     // Resolved per employee: staff on different shifts are mid-shift at
     // different moments, and only the one whose night is actually running
     // should have its open check-in counted as time at work.
-    const live = date === resolveWorkDate(shift, stamp) ? stamp : null;
+    const liveDate = resolveWorkDate(shift, stamp);
+    const live = date === liveDate ? stamp : null;
     const day = evaluateDay({
       date,
       shift,
@@ -370,6 +372,7 @@ async function buildDayRegister(date, { includeInactive = false, departmentId = 
       override: ovr.get(e.id) || null,
       holiday: hol.get(date) || null,
       nowStamp: live,
+      todayDate: liveDate,
       joinedOn: e.joined_on,
       exempt: !!e.attendance_exempt,
     });
