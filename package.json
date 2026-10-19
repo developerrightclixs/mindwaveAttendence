@@ -6,12 +6,12 @@
   "type": "commonjs",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch src/server.js",
+    "start": "node --env-file-if-exists=.env src/server.js",
+    "dev": "node --env-file-if-exists=.env --watch src/server.js",
     "dev:memory": "node scripts/dev-memory.js",
-    "seed": "node src/seed.js",
+    "seed": "node --env-file-if-exists=.env src/seed.js",
     "test": "node --test src/lib/timezone.test.js src/lib/request-cache.test.js src/lib/attendance.test.js src/lib/import.test.js src/lib/business-date.test.js src/lib/self-entry.test.js",
-    "export": "node scripts/export.js"
+    "export": "node --env-file-if-exists=.env scripts/export.js"
   },
   "engines": {
     "node": ">=20"

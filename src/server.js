@@ -124,6 +124,32 @@ function bootstrap() {
 let cookieMw = null;
 let sessionMw = null;
 
+// Locals that need nothing but this process. They are set before bootstrap,
+// not after it, because bootstrap is the step that fails when the database is
+// unreachable - and it answers with next(e), which skips every middleware
+// below and lands in the error handler. Set them afterwards and the error page
+// renders without them: a ReferenceError on `assetV` inside head.ejs, thrown
+// while reporting the original fault, which is then lost behind it.
+app.use((req, res, next) => {
+  res.locals.fmt = fmt;
+  res.locals.assetV = ASSET_V;
+  res.locals.icon = ui.icon;
+  res.locals.avatar = ui.avatar;
+  res.locals.STATUS_LABELS = STATUS_LABELS;
+  res.locals.path = req.path;
+  res.locals.query = req.query;
+  res.locals.calendarToday = fmt.isoDate();
+  res.locals.today = fmt.isoDate();
+  res.locals.rememberDays = REMEMBER_DAYS;
+  res.locals.navCounts = null;
+  res.locals.flash = null;
+  // head.ejs and foot.ejs read `user` bare, so it has to exist even when
+  // loadUser never got the chance to run. The real value lands below.
+  res.locals.user = null;
+  res.locals.csrf = '';
+  next();
+});
+
 app.use(async (req, res, next) => {
   try {
     await bootstrap();
@@ -174,22 +200,9 @@ app.use(loadUser);
 // the CSRF guard below, because that guard renders a page when it rejects and
 // every template needs these locals to exist.
 app.use(async (req, res, next) => {
-  // Set every cheap, synchronous local FIRST. If one of the database-backed
-  // ones below throws, the error page still has what it needs to render -
-  // otherwise a failed query produces a second failure inside the error
-  // handler and the user sees a blank 500 instead of the reason.
-  res.locals.fmt = fmt;
-  res.locals.assetV = ASSET_V;
-  res.locals.icon = ui.icon;
-  res.locals.avatar = ui.avatar;
-  res.locals.STATUS_LABELS = STATUS_LABELS;
-  res.locals.path = req.path;
-  res.locals.query = req.query;
-  res.locals.calendarToday = fmt.isoDate();
-  res.locals.today = fmt.isoDate();
-  res.locals.rememberDays = REMEMBER_DAYS;
-  res.locals.navCounts = null;
-  res.locals.flash = null;
+  // The cheap, synchronous locals are already set above, before bootstrap, so
+  // that a database failure still renders a readable error page. What is left
+  // here is only what the database itself can answer.
   // The business date in progress, not the calendar date - on a night shift
   // these differ between midnight and the early afternoon.
   //
