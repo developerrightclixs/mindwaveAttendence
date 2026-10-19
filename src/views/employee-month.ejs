@@ -87,7 +87,7 @@
       </thead>
       <tbody>
         <% data.days.forEach(function (d) { %>
-          <% if (d.status === 'not_employed' || d.status === 'upcoming') return; %>
+          <% if (d.status === 'not_employed') return; %>
           <tr class="<%= d.isOff ? 'is-off' : '' %> <%= d.date === today ? 'is-today' : '' %>">
             <td class="nowrap"><%= fmt.prettyDate(d.date).replace(/,\s*\d{4}$/, '') %></td>
             <td><span class="pill <%= d.inProgress ? 'in_progress' : d.status %>"><%= d.statusLabel %></span></td>
@@ -143,6 +143,7 @@
   <span><span class="pill half_day">Half day</span> counts 0.5</span>
   <span><span class="pill absent">Absent</span> nothing recorded</span>
   <span><span class="pill weekly_off">Weekly off</span> not expected in</span>
+  <span><span class="pill upcoming">Upcoming</span> still to come</span>
 </div>
 
 <%- include('partials/foot') %>
