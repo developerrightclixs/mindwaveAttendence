@@ -5,8 +5,9 @@ const {
   requireRole, setPassword, setPin, setKioskPassphrase, kioskPassphraseSet,
 } = require('../auth');
 const svc = require('../lib/service');
-const { isoDate, prettyDate, addDays } = require('../lib/dates');
+const { isoDate, prettyDate, addDays, isoStamp } = require('../lib/dates');
 const importer = require('../lib/import');
+const { offsetMinutes } = require('../lib/timezone');
 const { STATUS_LABELS, stampDateFor } = require('../lib/attendance');
 
 const router = express.Router();
@@ -521,6 +522,10 @@ router.get('/settings', async (req, res) => {
     holidays: await svc.listHolidays(`${year}-01-01`, `${year}-12-31`),
     year,
     isAdmin: req.user.role === 'admin',
+    // Every shift rule is read off this clock, so it is shown rather than
+    // assumed - a host in the wrong zone is otherwise invisible until the
+    // month's lateness is already wrong.
+    clock: { zone: process.env.TZ, now: isoStamp(), offset: offsetMinutes() },
   });
 });
 

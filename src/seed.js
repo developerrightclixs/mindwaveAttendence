@@ -2,10 +2,11 @@
 /**
  * First-run setup.
  *
- *   npm run seed     shifts, departments and an admin account
+ *   npm run seed     shifts, departments and an admin account *   npm run seed     shifts, departments and an admin account
  *
  * Safe to re-run: it only ever inserts what is missing.
  */
+require('./lib/timezone').applyTimezone();
 const crypto = require('node:crypto');
 const { init, all, one, run, audit, nowStamp, pool } = require('./db');
 const { setPassword } = require('./auth');

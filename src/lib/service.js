@@ -17,6 +17,7 @@ const {
   evaluateDay, summarise, resolveWorkDate, stampDateFor,
 } = require('./attendance');
 const { isoStamp, dateRange, addDays, monthBounds, isoWeekday } = require('./dates');
+const { memo } = require('./request-cache');
 
 // --- lookups ---------------------------------------------------------------
 
@@ -50,10 +51,12 @@ function listEmployees({ includeInactive = false, departmentId = null, managerId
   if (!includeInactive) where.push('e.active = 1');
   if (departmentId) { where.push('e.department_id = ?'); args.push(departmentId); }
   if (managerId) { where.push('e.manager_id = ?'); args.push(managerId); }
-  return all(
-    `SELECT ${employeeCols} ${EMP_JOIN}
+  const sql = `SELECT ${employeeCols} ${EMP_JOIN}
      ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-     ORDER BY e.active DESC, e.name`, ...args);
+     ORDER BY e.active DESC, e.name`;
+  // Keyed on the filters, so a department-filtered list never answers for the
+  // unfiltered one.
+  return memo(`employees:${sql}:${args.join(',')}`, () => all(sql, ...args));
 }
 
 // Headcount by LEFT JOIN rather than a correlated subquery: one pass instead
@@ -66,7 +69,9 @@ const listDepartments = () => all(
    GROUP BY d.id, d.name, d.created_at
    ORDER BY d.name`);
 
-const listShifts = () => all(
+// Memoised: a page that renders the register and the nav badges asks for the
+// shift list several times over, and it cannot change mid-request.
+const listShifts = () => memo('shifts', () => all(
   `SELECT s.id, s.name, s.start_time, s.end_time, s.grace_minutes,
           s.break_minutes, s.break_after_minutes, s.half_day_minutes,
           s.min_present_minutes, s.overtime_after_minutes,
@@ -78,12 +83,12 @@ const listShifts = () => all(
             s.break_minutes, s.break_after_minutes, s.half_day_minutes,
             s.min_present_minutes, s.overtime_after_minutes,
             s.overtime_grace_minutes, s.weekly_off, s.created_at
-   ORDER BY s.name`);
+   ORDER BY s.name`));
 
 const getShift = (id) => one('SELECT * FROM shifts WHERE id = ?', id);
 
-const listHolidays = (from, to) => all(
-  'SELECT * FROM holidays WHERE work_date BETWEEN ? AND ? ORDER BY work_date', from, to);
+const listHolidays = (from, to) => memo(`holidays:${from}:${to}`, () => all(
+  'SELECT * FROM holidays WHERE work_date BETWEEN ? AND ? ORDER BY work_date', from, to));
 
 /** Holidays in a range keyed by date, for O(1) lookup while evaluating. */
 async function holidayMap(from, to) {
@@ -102,7 +107,7 @@ async function holidayMap(from, to) {
 // Grouped on employees alone, then the shift is looked up. Selecting s.* while
 // grouping by s.id leans on Postgres's functional-dependency rule, which is
 // valid but needlessly clever - and not portable.
-const prevailingShift = async () => (await one(`
+const prevailingShift = () => memo('prevailing-shift', async () => (await one(`
   SELECT * FROM shifts
   WHERE id = (
     SELECT e.shift_id FROM employees e
@@ -110,7 +115,7 @@ const prevailingShift = async () => (await one(`
     GROUP BY e.shift_id
     ORDER BY COUNT(*) DESC, e.shift_id
     LIMIT 1
-  )`)) || null;
+  )`)) || null);
 
 /**
  * The business date currently in progress, org-wide.
@@ -247,6 +252,75 @@ async function setOverride({ employeeId, workDate, status, note, actorId,
 
 // --- derived views ---------------------------------------------------------
 
+/**
+ * Evaluated days for a set of employees over an inclusive date range, in a
+ * fixed number of queries however many employees there are.
+ *
+ * Evaluating one person's month needs their punches, their overrides, their
+ * shift and the holiday list. Asking for those per employee is four round
+ * trips each, which is unremarkable on a database running on the same machine
+ * and ruinous on one across a network: the nav badges walk every employee on
+ * every staff page, so a twenty-person company paid for roughly a hundred and
+ * forty sequential queries to render any screen, and it got worse with every
+ * hire.
+ *
+ * The range is loaded once for everyone and paired up in memory instead.
+ * `evaluateDay` is unchanged - this only changes how its inputs are fetched.
+ *
+ * Returns a Map of employee id -> evaluated days.
+ */
+async function evaluateRange(employees, from, to) {
+  const out = new Map();
+  if (!employees.length) return out;
+
+  const ids = employees.map((e) => e.id);
+  const slots = ids.map(() => '?').join(',');
+
+  const [punches, overrides, hol, shiftList] = await Promise.all([
+    all(`SELECT * FROM punches
+         WHERE employee_id IN (${slots}) AND work_date BETWEEN ? AND ?
+         ORDER BY punched_at`, ...ids, from, to),
+    all(`SELECT * FROM day_overrides
+         WHERE employee_id IN (${slots}) AND work_date BETWEEN ? AND ?`,
+    ...ids, from, to),
+    holidayMap(from, to),
+    listShifts(),
+  ]);
+
+  const shifts = new Map(shiftList.map((sh) => [sh.id, sh]));
+  const key = (empId, date) => `${empId}|${date}`;
+
+  const byDate = new Map();
+  for (const p of punches) {
+    const k = key(p.employee_id, p.work_date);
+    if (!byDate.has(k)) byDate.set(k, []);
+    byDate.get(k).push(p);
+  }
+  const ovr = new Map(overrides.map((o) => [key(o.employee_id, o.work_date), o]));
+
+  const stamp = isoStamp();
+  const dates = dateRange(from, to);
+
+  for (const e of employees) {
+    const shift = e.shift_id ? shifts.get(e.shift_id) || null : null;
+    // The night currently in progress for THIS employee's shift. Comparing the
+    // calendar date instead would, at 00:06 on a 20:00-05:00 shift, treat a
+    // colleague who is standing at their desk as a forgotten check-out.
+    const liveDate = resolveWorkDate(shift, stamp);
+    out.set(e.id, dates.map((date) => evaluateDay({
+      date,
+      shift,
+      punches: byDate.get(key(e.id, date)) || [],
+      override: ovr.get(key(e.id, date)) || null,
+      holiday: hol.get(date) || null,
+      nowStamp: date === liveDate ? stamp : null,
+      joinedOn: e.joined_on,
+      exempt: !!e.attendance_exempt,
+    })));
+  }
+  return out;
+}
+
 /** Evaluated days for one employee over an inclusive date range. */
 async function employeeDays(employeeId, from, to) {
   const emp = await one(
@@ -254,45 +328,18 @@ async function employeeDays(employeeId, from, to) {
     employeeId);
   if (!emp) return null;
 
-  const shift = emp.shift_id ? await getShift(emp.shift_id) : null;
-
-  const [punches, overrides, hol] = await Promise.all([
-    all(`SELECT * FROM punches
-         WHERE employee_id = ? AND work_date BETWEEN ? AND ?
-         ORDER BY punched_at`, employeeId, from, to),
-    all(`SELECT * FROM day_overrides
-         WHERE employee_id = ? AND work_date BETWEEN ? AND ?`, employeeId, from, to),
-    holidayMap(from, to),
-  ]);
-
-  const byDate = new Map();
-  for (const p of punches) {
-    if (!byDate.has(p.work_date)) byDate.set(p.work_date, []);
-    byDate.get(p.work_date).push(p);
-  }
-  const ovr = new Map(overrides.map((o) => [o.work_date, o]));
-  const stamp = isoStamp();
-  // The night currently in progress for THIS employee's shift. Comparing the
-  // calendar date instead would, at 00:06 on a 20:00-05:00 shift, treat a
-  // colleague who is standing at their desk as a forgotten check-out.
-  const liveDate = resolveWorkDate(shift, stamp);
-
-  const days = dateRange(from, to).map((date) => evaluateDay({
-    date,
-    shift,
-    punches: byDate.get(date) || [],
-    override: ovr.get(date) || null,
-    holiday: hol.get(date) || null,
-    nowStamp: date === liveDate ? stamp : null,
-    joinedOn: emp.joined_on,
-    exempt: !!emp.attendance_exempt,
-  }));
-
+  const days = (await evaluateRange([emp], from, to)).get(emp.id);
   return { employee: await getEmployee(employeeId), days, totals: summarise(days) };
 }
 
 /** One evaluated day for every employee - the daily register. */
-async function dayRegister(date, { includeInactive = false, departmentId = null } = {}) {
+function dayRegister(date, opts = {}) {
+  // The dashboard and the nav badges both want today's register. Memoised so
+  // the second asking is free rather than another four queries.
+  return memo(`register:${date}:${JSON.stringify(opts)}`, () => buildDayRegister(date, opts));
+}
+
+async function buildDayRegister(date, { includeInactive = false, departmentId = null } = {}) {
   const [employees, punches, overrides, hol, shiftList] = await Promise.all([
     listEmployees({ includeInactive, departmentId }),
     all('SELECT * FROM punches WHERE work_date = ? ORDER BY punched_at', date),
@@ -336,11 +383,11 @@ async function dayRegister(date, { includeInactive = false, departmentId = null 
 async function monthlyReport(anyDateInMonth, { departmentId = null, includeInactive = false } = {}) {
   const { from, to } = monthBounds(anyDateInMonth);
   const employees = await listEmployees({ includeInactive, departmentId });
-  const rows = [];
-  for (const e of employees) {
-    const r = await employeeDays(e.id, from, to);
-    rows.push({ employee: e, totals: r.totals, days: r.days });
-  }
+  const byEmp = await evaluateRange(employees, from, to);
+  const rows = employees.map((e) => {
+    const days = byEmp.get(e.id) || [];
+    return { employee: e, totals: summarise(days), days };
+  });
   return { from, to, rows };
 }
 
@@ -356,27 +403,35 @@ async function previousWorkingDate(date, maxBack = 10) {
   const offs = shift
     ? new Set(String(shift.weekly_off || '').split(',').map((n) => parseInt(n, 10)))
     : new Set();
+  // The whole window in one query rather than one query per day walked back.
+  const hol = await holidayMap(addDays(date, -maxBack), date);
   let d = date;
   for (let i = 0; i < maxBack; i++) {
     d = addDays(d, -1);
-    const isHoliday = await one('SELECT 1 FROM holidays WHERE work_date = ?', d);
-    if (!offs.has(isoWeekday(d)) && !isHoliday) return d;
+    if (!offs.has(isoWeekday(d)) && !hol.has(d)) return d;
   }
   return addDays(date, -1);
 }
 
-/** Counts for the nav badges. Runs on every staff page render. */
+/**
+ * Counts for the nav badges. Runs on every staff page render, which is why it
+ * evaluates the month in one batch rather than employee by employee, and
+ * reuses the register's employee list instead of asking for it again.
+ */
 async function navCounts() {
   const today = await currentBusinessDate();
   const reg = await dayRegister(today);
   const { from, to } = monthBounds(today);
 
+  // Someone not required to clock in cannot be an exception for not doing so.
+  const counted = reg.rows
+    .map((r) => r.employee)
+    .filter((e) => !e.attendance_exempt);
+
   // Only days that have finished can be exceptions.
   let exceptions = 0;
-  for (const e of await listEmployees()) {
-    if (e.attendance_exempt) continue;
-    const r = await employeeDays(e.id, from, to);
-    for (const d of r.days) {
+  for (const days of (await evaluateRange(counted, from, to)).values()) {
+    for (const d of days) {
       if (d.date >= today) continue;
       if (d.problems.length || (d.status === 'absent' && !d.isOff)) exceptions += 1;
     }
@@ -459,6 +514,11 @@ async function leaveBalance(employeeId, anyDateInMonth) {
      WHERE employee_id = ? AND status = 'leave' AND work_date BETWEEN ? AND ?
      ORDER BY work_date`, employeeId, from, to);
 
+  return tallyLeave(rows, allowance, from);
+}
+
+/** The arithmetic, split out so a whole team can be tallied from one query. */
+function tallyLeave(rows, allowance, from) {
   const used = { sick: 0, casual: 0, untyped: 0 };
   for (const r of rows) {
     if (r.leave_type === 'sick') used.sick += 1;
@@ -487,13 +547,34 @@ async function leaveBalance(employeeId, anyDateInMonth) {
   };
 }
 
-/** Balances for everyone, for the monthly report. */
-async function leaveBalances(anyDateInMonth, { departmentId = null } = {}) {
-  const employees = await listEmployees({ departmentId });
+/**
+ * Balances for a set of employees, from one query rather than one each.
+ *
+ * `employees` defaults to the active list; pass the one you already have to
+ * save fetching it twice.
+ */
+async function leaveBalances(anyDateInMonth, { departmentId = null, employees = null } = {}) {
+  const staff = employees || await listEmployees({ departmentId });
+  const { from, to } = monthBounds(anyDateInMonth);
   const out = new Map();
-  for (const e of employees) {
-    out.set(e.id, await leaveBalance(e.id, anyDateInMonth));
+  if (!staff.length) return out;
+
+  const ids = staff.map((e) => e.id);
+  const slots = ids.map(() => '?').join(',');
+  const [allowance, rows] = await Promise.all([
+    leaveAllowance(),
+    all(`SELECT employee_id, leave_type, work_date FROM day_overrides
+         WHERE employee_id IN (${slots}) AND status = 'leave'
+           AND work_date BETWEEN ? AND ?
+         ORDER BY work_date`, ...ids, from, to),
+  ]);
+
+  const byEmp = new Map();
+  for (const r of rows) {
+    if (!byEmp.has(r.employee_id)) byEmp.set(r.employee_id, []);
+    byEmp.get(r.employee_id).push(r);
   }
+  for (const e of staff) out.set(e.id, tallyLeave(byEmp.get(e.id) || [], allowance, from));
   return out;
 }
 
@@ -681,7 +762,7 @@ module.exports = {
   getEmployee, getEmployeeByEmail, getEmployeeByCode, listEmployees,
   listDepartments, listShifts, getShift, listHolidays,
   resolveWorkDate, punchState, recordPunch, deletePunch, setOverride,
-  employeeDays, dayRegister, monthlyReport,
+  employeeDays, evaluateRange, dayRegister, monthlyReport,
   prevailingShift, currentBusinessDate, employeeBusinessDate,
   previousWorkingDate, navCounts, dashboard,
   selfEntryWindow, setSelfEntryWindow, selfEntryBlocker,

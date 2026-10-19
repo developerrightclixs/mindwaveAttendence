@@ -8,6 +8,7 @@
  * it is for moving between projects, keeping an off-platform copy, and being
  * able to read your own data without a Postgres client.
  */
+require('../src/lib/timezone').applyTimezone();
 const fs = require('node:fs');
 const path = require('node:path');
 const { init, all, pool } = require('../src/db');

@@ -288,7 +288,10 @@ The short version, and the parts that actually bite:
    safely while the server runs and verifies the result opens.
 5. **Keep the machine awake and keep Windows Update out of the shift window.**
    On a night shift, the default small-hours reboot lands mid-shift.
-6. **Check the timezone.** Shift rules are evaluated in local wall-clock time.
+6. **Check the clock.** The app pins its own timezone (`Asia/Karachi`, or
+   `APP_TZ`) rather than inheriting the host's, because a cloud host runs in
+   UTC and would shift every check-in by the offset. **Setup → Server clock**
+   shows the time it is actually working from.
 
 ## Tests
 
@@ -296,13 +299,17 @@ The short version, and the parts that actually bite:
 npm test
 ```
 
-130 tests. 53 cover the rules engine (break deduction, grace handling, overtime
+167 tests. 73 cover the rules engine (break deduction, grace handling, overtime
 thresholds, half days, overnight shifts and their work-date attribution, future
-dates, malformed punch streams, the monthly rollup) 36 cover self-entry limits and the night-shift business date, and 41 cover the CSV importer (delimiters and quoting,
-header aliases, duplicate and auto-generated codes, PIN and password rules,
-date formats, manager resolution, and partial-failure handling). These are the
-calculations that end up in someone's pay and the path that creates staff
-records, so they are worth keeping green.
+dates, malformed punch streams, the monthly rollup), 35 cover self-entry limits
+and the night-shift business date, 46 cover the CSV importer (delimiters and
+quoting, header aliases, duplicate and auto-generated codes, PIN and password
+rules, date formats, manager resolution, and partial-failure handling), 6 pin
+the process timezone, including the `TZ=:UTC` a serverless host injects, and 7
+hold the per-request memo to its two safety properties - it never outlives a
+request, and any write empties it. These are the calculations that end up in
+someone's pay and the path that creates staff records, so they are worth
+keeping green.
 
 ## Layout
 

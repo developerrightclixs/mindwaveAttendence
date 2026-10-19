@@ -1,4 +1,9 @@
 'use strict';
+// The timezone is pinned before anything else is loaded, because every module
+// below reasons in local wall-clock time and a Date built under the wrong zone
+// cannot be corrected afterwards.
+const TIMEZONE = require('./lib/timezone').applyTimezone();
+
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
@@ -9,6 +14,7 @@ const cookieParser = require('cookie-parser');
 const { pool, init, one, getSetting, setSetting, DB_URL } = require('./db');
 const PgStore = require('./session-store');
 const { loadUser } = require('./auth');
+const { withRequestCache } = require('./lib/request-cache');
 const svc = require('./lib/service');
 const fmt = require('./lib/dates');
 const ui = require('./lib/ui');
@@ -52,6 +58,12 @@ let SECRET = process.env.SESSION_SECRET || '';
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.set('trust proxy', 1);
+
+// Everything downstream runs inside this request's own memo, so the repeated
+// lookups a page makes (the shift list, the active employees, the month's
+// holidays) cost one query each instead of one per asking. The store is
+// created per request and shared with nothing.
+app.use((req, res, next) => withRequestCache(() => next()));
 
 app.use(express.urlencoded({ extended: false, limit: '256kb' }));
 
@@ -139,6 +151,21 @@ app.use(async (req, res, next) => {
     });
   }
   cookieMw(req, res, (err) => (err ? next(err) : sessionMw(req, res, next)));
+});
+
+// "Keep me signed in" is a property of the session, not of the one response
+// that set it. `rolling` renews whatever window the cookie already carries,
+// which only stays 30 days for as long as originalMaxAge survives being
+// serialised into the store and read back out - a quiet dependency on a
+// detail of express-session. Re-asserting it here from the flag the login
+// stored makes the long window the session's own state: whatever came back
+// from the database, a remembered session is extended to the full window on
+// every request, and a short one is left alone.
+app.use((req, res, next) => {
+  if (req.session && req.session.remember) {
+    req.session.cookie.maxAge = REMEMBER_DAYS * 24 * 60 * 60 * 1000;
+  }
+  next();
 });
 
 app.use(loadUser);
@@ -278,6 +305,9 @@ if (require.main === module) {
       console.log(`  Kiosk                ->  http://${host}:${PORT}/kiosk`);
       console.log(`  Listening on: ${addr.address}:${addr.port}`);
       console.log(`  Database: ${where.slice(0, 72)}`);
+      // Printed because every shift rule is read off this clock. If it says
+      // UTC, lateness and night-shift dates are already wrong.
+      console.log(`  Clock: ${TIMEZONE} - ${fmt.isoStamp()}`);
       if (!hasAdmin) {
         console.log('\n  No admin account exists yet. Run:  npm run seed\n');
       } else {

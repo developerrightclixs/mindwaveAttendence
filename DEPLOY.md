@@ -21,13 +21,18 @@ powercfg /change hibernate-timeout-ac 0
 powercfg /change monitor-timeout-ac 10
 ```
 
-Check the clock and timezone. Shift rules are evaluated in local wall-clock
-time, so a wrong timezone silently shifts everyone's lateness:
+Check the clock. The app pins its own timezone (`Asia/Karachi` unless `APP_TZ`
+says otherwise), so the host's zone no longer shifts anyone's lateness — but
+the host's *time* still has to be right, and a machine that has drifted will
+record punches at the wrong minute:
 
 ```powershell
-Get-TimeZone                      # expect Pakistan Standard Time (UTC+05:00)
 w32tm /resync                     # sync with the time server
+Get-TimeZone                      # tidier if it matches, but not load-bearing
 ```
+
+**Setup → Server clock** shows what the app itself believes the time is. If
+that reads wrong, nothing downstream of it is right.
 
 ### Keep Windows Update out of your shift
 
@@ -69,6 +74,7 @@ Create `.env`-style settings as machine environment variables:
 | `PORT` | `3000` | or `80` to drop the `:3000` from URLs |
 | `DB_PATH` | `F:\AttandenceManagemtnSyaystem-Mindwave\data\attendance.db` | explicit beats relative |
 | `SECURE_COOKIES` | `1` | **only after** step 4 |
+| `APP_TZ` | `Asia/Karachi` | only if the office is somewhere else |
 
 A static IP matters: if DHCP moves this machine, every bookmark and the kiosk
 break. Reserve it on the router or set it statically.
@@ -241,6 +247,13 @@ Set these environment variables in the Vercel dashboard:
 | `DATABASE_URL` | the Supabase Transaction pooler URI |
 | `SESSION_SECRET` | a long random string, set once and kept |
 | `SECURE_COOKIES` | `1` |
+| `APP_TZ` | only if the office is not in Pakistan |
+
+Vercel runs on AWS Lambda, which exports `TZ=:UTC` into every invocation. The
+app overrides that and pins `Asia/Karachi` itself, because a server reasoning
+in UTC records a 20:49 check-in as 15:49 and files night shifts against the
+wrong date. Check **Setup → Server clock** after the first deploy; it shows
+the time the app is actually working from.
 
 `SESSION_SECRET` matters more here than it looks: without it the app generates
 one and stores it in the database, which works, but setting it explicitly means
@@ -257,7 +270,25 @@ DATABASE_URL="postgresql://..." npm run seed
 It prints the admin password once. Sign in, create your own named admin, then
 delete the seed account so the audit trail carries real names.
 
-### 4. Lock the kiosk before anyone finds the URL
+### 4. Put the function next to the database
+
+Every page is a handful of queries, and on a serverless host each one is a
+round trip across whatever distance separates the function from Postgres. A
+function in Washington talking to a database in Singapore pays roughly 200ms
+per query and no amount of tuning in this repo will fix it; the same pair in
+the same region pays about 2ms.
+
+So check the two regions match: Vercel's is under **Project Settings ->
+Functions -> Region** (it defaults to `iad1`, Washington DC), and Supabase's
+is on the project's home page. Move whichever is easier — Vercel's is a
+dropdown and takes a redeploy; Supabase's means a new project and a restore.
+
+If pages are still slow after that, it is worth knowing what the budget looks
+like: a staff page is about 16 queries regardless of headcount, and a cold
+start adds one more. If you are seeing hundreds, something has reintroduced a
+per-employee loop — see `evaluateRange` in `src/lib/service.js`.
+
+### 5. Lock the kiosk before anyone finds the URL
 
 `/kiosk` takes an employee code and PIN from whoever opens it. With
 `SECURE_COOKIES=1` the kiosk **fails closed** until a passphrase is set, so a

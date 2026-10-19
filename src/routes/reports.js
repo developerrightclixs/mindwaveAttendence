@@ -3,6 +3,7 @@ const express = require('express');
 const { requireRole } = require('../auth');
 const svc = require('../lib/service');
 const { monthBounds, addDays, prettyDate, formatDuration } = require('../lib/dates');
+const { summarise } = require('../lib/attendance');
 
 const router = express.Router();
 router.use(requireRole('manager'));
@@ -41,11 +42,17 @@ router.get('/monthly', async (req, res) => {
 
   const { from, to } = monthBounds(month);
   const employees = await svc.listEmployees({ departmentId, managerId });
-  const rows = [];
-  for (const e of employees) {
-    const r = await svc.employeeDays(e.id, from, to);
-    rows.push({ employee: e, totals: r.totals, leave: await svc.leaveBalance(e.id, month) });
-  }
+  // The whole team's month in a fixed number of queries, rather than six per
+  // head - a sixty-person report used to be several hundred round trips.
+  const [byEmp, leave] = await Promise.all([
+    svc.evaluateRange(employees, from, to),
+    svc.leaveBalances(month, { employees }),
+  ]);
+  const rows = employees.map((e) => ({
+    employee: e,
+    totals: summarise(byEmp.get(e.id) || []),
+    leave: leave.get(e.id),
+  }));
 
   if (req.query.format === 'csv') {
     const out = [[
@@ -99,9 +106,9 @@ router.get('/detail', async (req, res) => {
     'Late minutes', 'Early-exit minutes', 'Overtime hours',
     'Day credit', 'Note', 'Data problems',
   ]];
+  const byEmp = await svc.evaluateRange(employees, from, to);
   for (const e of employees) {
-    const r = await svc.employeeDays(e.id, from, to);
-    for (const d of r.days) {
+    for (const d of byEmp.get(e.id) || []) {
       if (d.status === 'not_employed' || d.status === 'upcoming') continue;
       out.push([
         e.emp_code, e.name, d.date, prettyDate(d.date).split(',')[0],
@@ -127,10 +134,10 @@ router.get('/exceptions', async (req, res) => {
   // is someone at work, not a missing punch.
   const today = await svc.currentBusinessDate();
 
+  const byEmp = await svc.evaluateRange(employees, from, to);
   const items = [];
   for (const e of employees) {
-    const r = await svc.employeeDays(e.id, from, to);
-    for (const d of r.days) {
+    for (const d of byEmp.get(e.id) || []) {
       // Today is still in progress; an open check-in is not yet a problem.
       if (d.date >= today) continue;
       // Someone not required to clock in cannot be an exception for not doing so.

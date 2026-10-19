@@ -15,8 +15,10 @@
  * writes commits or rolls back together.
  */
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 const path = require('node:path');
 const { Pool, types } = require('pg');
+const { invalidate, memo } = require('./lib/request-cache');
 
 // Return BIGINT and NUMERIC as JavaScript numbers. COUNT(*) comes back as a
 // string otherwise, and `'3' > 2` is the kind of bug that hides for months.
@@ -90,6 +92,10 @@ const all = async (sql, ...args) => (await query(sql, args)).rows;
 const one = async (sql, ...args) => (await query(sql, args)).rows[0];
 const run = async (sql, ...args) => {
   const r = await query(sql, args);
+  // A write makes anything this request has already remembered potentially
+  // stale, so the per-request memo is emptied rather than allowed to serve a
+  // value from before the write.
+  invalidate();
   return { rowCount: r.rowCount, rows: r.rows };
 };
 
@@ -104,6 +110,7 @@ async function tx(fn) {
     one: async (sql, ...args) => (await client.query(toPg(sql), args)).rows[0],
     run: async (sql, ...args) => {
       const r = await client.query(toPg(sql), args);
+      invalidate();
       return { rowCount: r.rowCount, rows: r.rows };
     },
   };
@@ -134,10 +141,29 @@ const COLUMN_MIGRATIONS = [
 
 let ready = null;
 
+/** Fingerprint of the schema this build expects, so a stale one is noticed. */
+function schemaFingerprint(sql) {
+  return crypto.createHash('sha1')
+    .update(sql).update(JSON.stringify(COLUMN_MIGRATIONS))
+    .digest('hex').slice(0, 16);
+}
+
 /**
  * Create the schema if it is missing. Safe on every cold start: every statement
  * is IF NOT EXISTS, and the promise is cached so concurrent requests do not
  * race through it.
+ *
+ * On a long-running server this happens once at boot and the cost is
+ * invisible. On a serverless host there is no "once": every cold instance is a
+ * new process, and a quiet week of traffic means most page loads start one. So
+ * the schema is fingerprinted and the result recorded - a cold start that
+ * finds its own fingerprint already there skips the DDL and spends a single
+ * round trip instead of three plus however long Postgres takes to take locks
+ * on twenty objects.
+ *
+ * Anything unexpected - no settings table, a different fingerprint, a failed
+ * read - falls through to running the DDL, which is the behaviour this
+ * replaces and is safe to repeat.
  */
 function init() {
   if (!ready) {
@@ -147,6 +173,14 @@ function init() {
           'No database configured. Set DATABASE_URL to your Supabase connection string.');
       }
       const sql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
+      const want = schemaFingerprint(sql);
+
+      try {
+        const r = await pool.query(
+          'SELECT value FROM settings WHERE key = $1', ['schema_fingerprint']);
+        if (r.rows[0] && r.rows[0].value === want) return;
+      } catch { /* no settings table yet, or no database yet: build it below */ }
+
       await pool.query(sql);
       // CREATE TABLE IF NOT EXISTS never adds a column to a table that already
       // exists, so additive changes need applying separately.
@@ -154,6 +188,12 @@ function init() {
         await pool.query(
           `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${decl}`);
       }
+      // Recorded only once the DDL has actually succeeded, so a half-applied
+      // schema is never mistaken for a finished one.
+      await pool.query(
+        `INSERT INTO settings (key, value) VALUES ($1, $2)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        ['schema_fingerprint', want]);
     })().catch((e) => {
       ready = null;              // let the next request retry rather than wedge
       throw e;
@@ -172,8 +212,18 @@ function nowStamp() {
     + `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
+/**
+ * Settings are read one key at a time by callers but fetched as a table.
+ *
+ * A page asks for the self-entry window, the leave allowance and the kiosk
+ * lock separately - five round trips for five short rows. The whole table is
+ * a handful of rows, so it is fetched once per request and answered from
+ * there. A write empties the memo, so a route that saves a setting and reads
+ * it back still sees the new value.
+ */
 async function getSetting(key, fallback = null) {
-  const row = await one('SELECT value FROM settings WHERE key = ?', key);
+  const rows = await memo('settings', () => all('SELECT key, value FROM settings'));
+  const row = rows.find((r) => r.key === key);
   return row ? row.value : fallback;
 }
 

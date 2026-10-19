@@ -6,6 +6,7 @@
  * explicit ids are inserted here and Postgres would otherwise hand out ids
  * that are already taken.
  */
+require('../src/lib/timezone').applyTimezone();
 const Database = require('better-sqlite3');
 const { one, init, run, tx, pool, nowStamp } = require('../src/db');
 

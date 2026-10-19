@@ -89,6 +89,27 @@
 
 <div class="card">
   <div class="card-head">
+    <span class="chip-icon info"><%- icon('clock', 15) %></span>
+    <h2>Server clock</h2>
+    <span class="spacer"></span>
+    <span class="pill"><%= clock.zone %></span>
+  </div>
+  <div class="card-body">
+    <p class="sub" style="margin:0">
+      Shift times, lateness and the business date a night shift belongs to are
+      all read off this clock, so it has to match the clock on the wall here.
+      It currently reads <strong><%= clock.now %></strong>
+      (UTC<%= clock.offset < 0 ? '-' : '+' %><%= fmt.minutesToTime(Math.abs(clock.offset)) %>).
+      If that is not the local time, set <code>APP_TZ</code> in the environment
+      to your IANA zone &mdash; <code>Asia/Karachi</code> for Pakistan &mdash;
+      and restart. A cloud host runs in UTC unless told otherwise, which
+      silently shifts every check-in by the offset.
+    </p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
     <span class="chip-icon info"><%- icon('calendar', 15) %></span>
     <h2>Leave allowance</h2>
     <span class="spacer"></span>

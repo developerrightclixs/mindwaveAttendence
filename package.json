@@ -10,7 +10,7 @@
     "dev": "node --watch src/server.js",
     "dev:memory": "node scripts/dev-memory.js",
     "seed": "node src/seed.js",
-    "test": "node --test src/lib/attendance.test.js src/lib/import.test.js src/lib/business-date.test.js src/lib/self-entry.test.js",
+    "test": "node --test src/lib/timezone.test.js src/lib/request-cache.test.js src/lib/attendance.test.js src/lib/import.test.js src/lib/business-date.test.js src/lib/self-entry.test.js",
     "export": "node scripts/export.js"
   },
   "engines": {
