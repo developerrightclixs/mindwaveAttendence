@@ -223,13 +223,16 @@ function evaluateDay({
   const stillIn = sessions.some((s) => s.open);
 
   // --- Lateness ------------------------------------------------------------
-  // Grace decides *whether* a day is late; lateness is then measured from the
-  // scheduled start, not from the end of grace. Arriving 09:15 on a 09:00
-  // shift with 10m grace is 15 minutes late, not 5.
+  // Grace is deducted, not just a threshold: it decides whether a day is late
+  // AND is subtracted from the figure. Arriving 09:15 on a 09:00 shift with
+  // 10m grace is 5 minutes late, not 15 - the grace is time the employee is
+  // entitled to, so charging it back the moment they overrun by a minute
+  // would make the first minute past the window cost eleven.
   let lateMinutes = 0;
   if (firstIn) {
     const inMins = minutesIntoDay(firstIn, date);
-    if (inMins > start + (sh.grace_minutes || 0)) lateMinutes = inMins - start;
+    const graced = start + (sh.grace_minutes || 0);
+    if (inMins > graced) lateMinutes = inMins - graced;
   }
 
   // --- Early exit ----------------------------------------------------------

@@ -67,10 +67,19 @@ test('arrival inside grace is not late', () => {
   assert.equal(d.lateMinutes, 0);
 });
 
-test('lateness is measured from shift start, not from end of grace', () => {
+test('lateness is measured from the end of grace, not from shift start', () => {
   const d = evalDay([p('09:15', 'in'), p('18:00', 'out')]);
   assert.equal(d.status, 'late');
-  assert.equal(d.lateMinutes, 15);      // not 5
+  assert.equal(d.lateMinutes, 5);       // not 15 - the 10m grace is deducted
+});
+
+test('the first minute past grace costs one minute, not the whole grace', () => {
+  // The point of deducting grace rather than merely gating on it: there is no
+  // cliff at the edge of the window.
+  assert.equal(evalDay([p('09:10', 'in'), p('18:00', 'out')]).lateMinutes, 0);
+  const over = evalDay([p('09:11', 'in'), p('18:00', 'out')]);
+  assert.equal(over.status, 'late');
+  assert.equal(over.lateMinutes, 1);
 });
 
 test('leaving before shift end records early exit', () => {
@@ -170,7 +179,7 @@ test('a late arrival that is also short is a half day, not late', () => {
   const d = evalDay([p('11:00', 'in'), p('14:00', 'out')]);
   assert.equal(d.workedMinutes, 180);
   assert.equal(d.status, 'half_day');
-  assert.equal(d.lateMinutes, 120);     // still recorded for the report
+  assert.equal(d.lateMinutes, 110);     // still recorded for the report
 });
 
 // --- messy punch streams ---------------------------------------------------
@@ -286,7 +295,7 @@ test('overnight shift detects lateness across midnight correctly', () => {
       { punched_at: '2026-10-16 06:00:00', work_date: DAY, kind: 'out' },
     ],
   });
-  assert.equal(d.lateMinutes, 40);
+  assert.equal(d.lateMinutes, 30);
   assert.equal(d.status, 'late');
 });
 
@@ -324,7 +333,7 @@ test('a missing shift falls back to defaults rather than crashing', () => {
 test('summarise rolls days into report figures', () => {
   const days = [
     evalDay([p('09:00', 'in'), p('18:00', 'out')]),                 // present
-    evalDay([p('09:30', 'in'), p('18:00', 'out')]),                 // late 30
+    evalDay([p('09:30', 'in'), p('18:00', 'out')]),                 // late 20
     evalDay([p('09:00', 'in'), p('12:00', 'out')]),                 // half day
     evalDay([]),                                                     // absent
     evalDay([], { override: { status: 'leave' } }),                  // leave
@@ -337,7 +346,7 @@ test('summarise rolls days into report figures', () => {
   assert.equal(t.halfDay, 1);
   assert.equal(t.absent, 1);
   assert.equal(t.leave, 1);
-  assert.equal(t.lateMinutes, 30);
+  assert.equal(t.lateMinutes, 20);
   assert.equal(t.overtimeMinutes, 120);
   assert.equal(t.payableDays, 3.5);    // 3 full + 1 half
 });
@@ -496,7 +505,7 @@ test('lateness on a night shift is measured across midnight correctly', () => {
       { punched_at: '2026-10-16 05:00:00', work_date: DAY, kind: 'out' },
     ],
   });
-  assert.equal(d.lateMinutes, 35);
+  assert.equal(d.lateMinutes, 25);
   assert.equal(d.status, 'late');
 });
 
