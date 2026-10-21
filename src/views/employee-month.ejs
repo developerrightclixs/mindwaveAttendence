@@ -1,5 +1,18 @@
 <%- include('partials/head') %>
 
+<%
+/* "Edit" has to land on THIS employee's row, not merely on the right date.
+   The register is the whole roster, so a bare ?date= link drops the admin on a
+   page of everyone and leaves them to find the person again. Carrying the
+   employee code through the register's own search filter narrows it to the one
+   row, and `edit` tells that row to open its panel already expanded. */
+function registerLink(date) {
+  return '/admin/register?date=' + encodeURIComponent(date)
+    + '&q=' + encodeURIComponent(data.employee.emp_code)
+    + '&edit=' + data.employee.id;
+}
+%>
+
 <div class="page-head">
   <div>
     <h1><%= data.employee.name %></h1>
@@ -66,7 +79,7 @@
   <div class="card-head">
     <h2>Day by day</h2>
     <% if (canEdit) { %>
-      <a class="btn small" href="/admin/register?date=<%= today %>">Correct a day</a>
+      <a class="btn small" href="<%= registerLink(today) %>">Correct a day</a>
     <% } %>
   </div>
   <div class="table-wrap">
@@ -116,7 +129,7 @@
             </td>
             <% if (canEdit) { %>
               <td class="num">
-                <a class="btn small" href="/admin/register?date=<%= d.date %>">Edit</a>
+                <a class="btn small" href="<%= registerLink(d.date) %>">Edit</a>
               </td>
             <% } %>
           </tr>

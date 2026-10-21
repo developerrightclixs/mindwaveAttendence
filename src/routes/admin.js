@@ -18,6 +18,21 @@ router.use(requireRole('manager'));
 const adminOnly = requireRole();          // admin passes every requireRole check
 
 const validDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
+
+/**
+ * Back to the register, keeping the admin where they were working.
+ *
+ * Every correction here is a POST-redirect-GET, and a bare ?date= redirect
+ * lands on the whole roster with the row they were editing closed again. An
+ * admin fixing one person's night would be sent back to find them after every
+ * single save, which is what makes correcting a day feel impossible.
+ */
+function backToRegister(date, body = {}) {
+  const p = new URLSearchParams({ date });
+  if (body.q) p.set('q', String(body.q).slice(0, 80));
+  if (body.edit) p.set('edit', String(asInt(body.edit)));
+  return `/admin/register?${p}`;
+}
 const asInt = (v, dflt = 0) => {
   const n = parseInt(v, 10);
   return Number.isFinite(n) ? n : dflt;
@@ -87,7 +102,7 @@ router.post('/register/override', adminOnly, async (req, res) => {
     actorId: req.user.id,
   });
   res.flash('ok', clean ? `Day marked as ${STATUS_LABELS[clean]}.` : 'Override removed.');
-  res.redirect(`/admin/register?date=${workDate}`);
+  res.redirect(backToRegister(workDate, req.body));
 });
 
 /** Add a correcting punch by hand. */
@@ -100,7 +115,7 @@ router.post('/register/punch', adminOnly, async (req, res) => {
   if (!validDate(date)) throw Object.assign(new Error('Bad date'), { status: 400 });
   if (!/^\d{2}:\d{2}$/.test(time)) {
     res.flash('err', 'Enter the time as HH:MM.');
-    return res.redirect(`/admin/register?date=${date}`);
+    return res.redirect(backToRegister(date, req.body));
   }
 
   // On an overnight shift the morning end of the night falls on the NEXT
@@ -126,7 +141,7 @@ router.post('/register/punch', adminOnly, async (req, res) => {
   } catch (e) {
     res.flash('err', e.message);
   }
-  res.redirect(`/admin/register?date=${date}`);
+  res.redirect(backToRegister(date, req.body));
 });
 
 /** Correct the clock time of a punch already on the record. */
@@ -155,13 +170,14 @@ router.post('/register/punch/:id', adminOnly, async (req, res) => {
   } catch (e) {
     res.flash('err', e.message);
   }
-  res.redirect(`/admin/register?date=${validDate(date) ? date : await svc.currentBusinessDate()}`);
+  res.redirect(backToRegister(
+    validDate(date) ? date : await svc.currentBusinessDate(), req.body));
 });
 
 router.post('/register/punch/:id/delete', adminOnly, async (req, res) => {
   const row = await svc.deletePunch(asInt(req.params.id), req.user.id);
   res.flash('ok', 'Punch deleted.');
-  res.redirect(`/admin/register?date=${row.work_date}`);
+  res.redirect(backToRegister(row.work_date, req.body));
 });
 
 /** Close out everyone still checked in from a past day. */
