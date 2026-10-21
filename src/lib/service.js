@@ -16,7 +16,9 @@ const { all, one, run, tx, audit, getSetting, setSetting, nowStamp } = require('
 const {
   evaluateDay, summarise, resolveWorkDate, stampDateFor,
 } = require('./attendance');
-const { isoStamp, dateRange, addDays, monthBounds, isoWeekday } = require('./dates');
+const {
+  isoStamp, dateRange, addDays, monthBounds, isoWeekday, clockOf,
+} = require('./dates');
 const { memo } = require('./request-cache');
 
 // --- lookups ---------------------------------------------------------------
@@ -214,6 +216,45 @@ async function recordPunch({ employeeId, kind = null, source = 'web', note = nul
       `${k} at ${at} on ${wd}${note ? ' - ' + note : ''}`);
   }
   return { id: res.rows[0].id, kind: k, punched_at: at, work_date: wd };
+}
+
+/**
+ * Change the clock time of a punch that is already recorded.
+ *
+ * Correcting a time by adding another punch does not work: the register reads
+ * the FIRST check-in and the LAST check-out of the night, so an admin who adds
+ * a corrected 20:30 next to a mistaken 20:05 changes nothing on screen and
+ * leaves an unpaired punch behind. HR has to be able to move the existing one.
+ *
+ * The schema keeps punches immutable for everyone else precisely so that this
+ * one path is identifiable: the row moves, and the audit trail records who
+ * moved it, from what, to what.
+ */
+async function updatePunchTime({ punchId, time, note = null, actorId }) {
+  const row = await one('SELECT * FROM punches WHERE id = ?', punchId);
+  if (!row) throw Object.assign(new Error('No such punch'), { status: 404 });
+  if (!/^\d{2}:\d{2}$/.test(String(time || ''))) {
+    throw Object.assign(new Error('Enter the time as HH:MM'), { status: 400 });
+  }
+
+  const emp = await one('SELECT shift_id FROM employees WHERE id = ?', row.employee_id);
+  const shift = emp && emp.shift_id ? await getShift(emp.shift_id) : null;
+  // The night is not being moved, only the clock time within it - so the
+  // business date stays put and only the calendar day of the stamp is
+  // re-derived. On an overnight shift 04:00 belongs to the morning after the
+  // work date, the same cut-over the add-punch form and self-entry both use.
+  const stampDate = stampDateFor(shift, row.work_date, time);
+  const at = `${stampDate} ${time}:00`;
+  if (at === row.punched_at) return { ...row, unchanged: true };
+
+  const reason = String(note || '').trim();
+  await run('UPDATE punches SET punched_at = ?, note = ? WHERE id = ?',
+    at, reason || row.note, punchId);
+  await audit(actorId, 'punch.edit', `employee:${row.employee_id}`,
+    `${row.kind} on ${row.work_date} moved ${clockOf(row.punched_at)} -> ${time}`
+    + (reason ? ' - ' + reason : ''));
+
+  return { ...row, punched_at: at, stampMoved: stampDate !== row.work_date };
 }
 
 async function deletePunch(punchId, actorId) {
@@ -764,7 +805,8 @@ async function existingIdentifiers() {
 module.exports = {
   getEmployee, getEmployeeByEmail, getEmployeeByCode, listEmployees,
   listDepartments, listShifts, getShift, listHolidays,
-  resolveWorkDate, punchState, recordPunch, deletePunch, setOverride,
+  resolveWorkDate, punchState, recordPunch, deletePunch, updatePunchTime,
+  setOverride,
   employeeDays, evaluateRange, dayRegister, monthlyReport,
   prevailingShift, currentBusinessDate, employeeBusinessDate,
   previousWorkingDate, navCounts, dashboard,

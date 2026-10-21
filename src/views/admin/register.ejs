@@ -183,13 +183,21 @@
                     <input type="hidden" name="_csrf" value="<%= csrf %>">
                     <input type="hidden" name="employee_id" value="<%= r.employee.id %>">
                     <input type="hidden" name="work_date" value="<%= date %>">
+                    <% if (r.override) { %>
+                      <p class="punch-note bad-text">
+                        This night is pinned as <strong><%= statuses[r.override.status] || r.override.status %></strong>,
+                        so correcting the times will not change the status. Set it back to
+                        &ldquo;derive from punches&rdquo; below to let the clock decide again.
+                      </p>
+                    <% } %>
                     <div class="field">
                       <label>Mark whole night as</label>
                       <select name="status">
                         <option value="">— derive from punches —</option>
                         <% Object.keys(statuses).forEach(function (k) { %>
                           <% if (['not_employed', 'upcoming', 'not_required'].includes(k)) return; %>
-                          <option value="<%= k %>"><%= statuses[k] %></option>
+                          <option value="<%= k %>"
+                                  <%= r.override && r.override.status === k ? 'selected' : '' %>><%= statuses[k] %></option>
                         <% }); %>
                       </select>
                     </div>
@@ -198,10 +206,14 @@
                       <label>If leave, which kind</label>
                       <select name="leave_type">
                         <option value="">— not from the allowance —</option>
-                        <option value="sick" <%= bal && !bal.left.sick ? 'disabled' : '' %>>
+                        <option value="sick"
+                                <%= r.override && r.override.leave_type === 'sick' ? 'selected' : '' %>
+                                <%= bal && !bal.left.sick ? 'disabled' : '' %>>
                           Sick<%= bal ? ' (' + bal.left.sick + ' of ' + bal.allowance.sick + ' left)' : '' %>
                         </option>
-                        <option value="casual" <%= bal && !bal.left.casual ? 'disabled' : '' %>>
+                        <option value="casual"
+                                <%= r.override && r.override.leave_type === 'casual' ? 'selected' : '' %>
+                                <%= bal && !bal.left.casual ? 'disabled' : '' %>>
                           Casual<%= bal ? ' (' + bal.left.casual + ' of ' + bal.allowance.casual + ' left)' : '' %>
                         </option>
                       </select>
@@ -218,23 +230,29 @@
                     <button class="btn small" type="submit">Apply</button>
                   </form>
 
-                  <% if (r.sessions.length) { %>
+                  <% if (r.punches && r.punches.length) { %>
                     <div style="margin-top:12px">
                       <label>Recorded punches</label>
-                      <% r.sessions.forEach(function (s) { %>
-                        <div class="btn-row" style="margin-bottom:5px">
-                          <span class="dim" style="font-size:12.5px"><%= fmt.clockOf(s.in.punched_at) %> in</span>
-                          <form method="post" action="/admin/register/punch/<%= s.in.id %>/delete" class="inline-form">
+                      <p class="punch-note">Change a time and save to move that
+                        punch. Adding a second punch does not replace a wrong one.</p>
+                      <% r.punches.forEach(function (p) { %>
+                        <div class="punch-edit">
+                          <form method="post" action="/admin/register/punch/<%= p.id %>"
+                                class="inline-form">
+                            <input type="hidden" name="_csrf" value="<%= csrf %>">
+                            <input type="hidden" name="work_date" value="<%= date %>">
+                            <input type="time" name="time" required
+                                   value="<%= fmt.clockOf(p.punched_at) %>"
+                                   aria-label="<%= p.kind === 'in' ? 'Check-in' : 'Check-out' %> time">
+                            <span class="dim"><%= p.kind %></span>
+                            <button class="btn small" type="submit">Save</button>
+                          </form>
+                          <form method="post" action="/admin/register/punch/<%= p.id %>/delete"
+                                class="inline-form"
+                                onsubmit="return confirm('Delete this <%= p.kind %> punch?')">
                             <input type="hidden" name="_csrf" value="<%= csrf %>">
                             <button class="btn small danger" type="submit" title="Delete">&times;</button>
                           </form>
-                          <% if (s.out) { %>
-                            <span class="dim" style="font-size:12.5px"><%= fmt.clockOf(s.out.punched_at) %> out</span>
-                            <form method="post" action="/admin/register/punch/<%= s.out.id %>/delete" class="inline-form">
-                              <input type="hidden" name="_csrf" value="<%= csrf %>">
-                              <button class="btn small danger" type="submit" title="Delete">&times;</button>
-                            </form>
-                          <% } %>
                         </div>
                       <% }); %>
                     </div>

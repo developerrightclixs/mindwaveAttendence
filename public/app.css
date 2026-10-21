@@ -747,6 +747,15 @@ details.row-edit summary {
   cursor: pointer; font-size: 12.5px; color: var(--blue); font-weight: 580; list-style: none;
 }
 details.row-edit summary::-webkit-details-marker { display: none; }
+/* Correcting a punch already on the record. One line per punch: its time as an
+   editable field, which end of the session it is, save, delete. The time input
+   drops its 100% width here so all four fit inside the 260px panel. */
+.punch-note { font-size: 12px; color: var(--text-faint); font-weight: 400; margin: 4px 0 8px; }
+.punch-edit { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+.punch-edit .inline-form { display: flex; align-items: center; gap: 6px; }
+.punch-edit input[type=time] { width: auto; padding: 4px 7px; font-size: 12.5px; }
+.punch-edit .dim { font-size: 12px; }
+
 details.row-edit .panel-inline {
   background: var(--surface-2);
   border: 1px solid var(--border);

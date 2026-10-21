@@ -171,7 +171,7 @@ function buildSessions(punches, nowStamp) {
     if (!live) problems.push('Check-in at ' + clockOf(open.punched_at) + ' was never closed');
   }
 
-  return { sessions, problems };
+  return { sessions, problems, sorted };
 }
 
 /**
@@ -195,7 +195,7 @@ function evaluateDay({
   const sh = { ...DEFAULT_SHIFT, ...(shift || {}) };
   const { start, end } = shiftWindow(sh);
 
-  const { sessions, problems } = buildSessions(punches, nowStamp);
+  const { sessions, problems, sorted } = buildSessions(punches, nowStamp);
   const gross = sessions.reduce((s, x) => s + x.minutes, 0);
 
   // Unpaid break: time already spent punched-out between sessions counts
@@ -342,6 +342,13 @@ function evaluateDay({
     overtimeMinutes,
     stillIn,
     sessions,
+    // Every punch on the record, in time order - not only the ones that paired
+    // into a session. An orphan check-out is exactly the thing HR has to be
+    // able to reach, and it appears in `problems` but in no session.
+    punches: sorted,
+    // The pinned-day row itself, so a screen can say that HR's word is
+    // currently overriding the punches rather than silently ignoring them.
+    override: override || null,
     problems,
     isOff,
     countsPresent,

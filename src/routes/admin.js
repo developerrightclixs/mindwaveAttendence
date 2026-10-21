@@ -129,6 +129,35 @@ router.post('/register/punch', adminOnly, async (req, res) => {
   res.redirect(`/admin/register?date=${date}`);
 });
 
+/** Correct the clock time of a punch already on the record. */
+router.post('/register/punch/:id', adminOnly, async (req, res) => {
+  const time = String(req.body.time || '').trim();
+  let date = req.body.work_date;
+  try {
+    const row = await svc.updatePunchTime({
+      punchId: asInt(req.params.id),
+      time,
+      note: req.body.note || null,
+      actorId: req.user.id,
+    });
+    // Redirect to the night the punch actually belongs to, not to whatever the
+    // form claimed, so a stale tab cannot bounce the admin to another day.
+    date = row.work_date;
+    if (row.unchanged) {
+      res.flash('ok', 'That is already the recorded time.');
+    } else {
+      // On an overnight shift a corrected 04:00 belongs to the morning after
+      // the night it is filed under; say so rather than leave the admin
+      // wondering why the date on the record is not the one they clicked.
+      res.flash('ok', `${row.kind === 'in' ? 'Check-in' : 'Check-out'} moved to ${time}`
+        + (row.stampMoved ? ` (${row.punched_at.slice(0, 10)}, the morning after)` : '') + '.');
+    }
+  } catch (e) {
+    res.flash('err', e.message);
+  }
+  res.redirect(`/admin/register?date=${validDate(date) ? date : await svc.currentBusinessDate()}`);
+});
+
 router.post('/register/punch/:id/delete', adminOnly, async (req, res) => {
   const row = await svc.deletePunch(asInt(req.params.id), req.user.id);
   res.flash('ok', 'Punch deleted.');
