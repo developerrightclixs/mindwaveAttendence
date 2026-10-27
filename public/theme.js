@@ -40,9 +40,47 @@
     });
   }
 
+  /* Mobile navigation drawer.
+
+     Open state lives in one class on the header, so the CSS decides whether a
+     drawer exists at all - above the breakpoint the rules never match and this
+     code is inert even if the class is somehow set. */
+  function initNav() {
+    var bar = document.getElementById('topbar');
+    var btn = document.getElementById('nav-toggle');
+    var backdrop = document.getElementById('nav-backdrop');
+    if (!bar || !btn) return;
+
+    function set(open) {
+      bar.classList.toggle('nav-open', open);
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      // The page behind the drawer must not scroll under the thumb.
+      document.body.style.overflow = open ? 'hidden' : '';
+    }
+
+    btn.addEventListener('click', function () {
+      set(!bar.classList.contains('nav-open'));
+    });
+    if (backdrop) backdrop.addEventListener('click', function () { set(false); });
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && bar.classList.contains('nav-open')) {
+        set(false);
+        btn.focus();
+      }
+    });
+
+    // Rotating a phone can cross the breakpoint, which hides the drawer by
+    // CSS alone - without this the body would stay locked at desktop width.
+    window.addEventListener('resize', function () {
+      if (bar.classList.contains('nav-open') && getComputedStyle(btn).display === 'none') set(false);
+    });
+  }
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
+    document.addEventListener('DOMContentLoaded', function () { init(); initNav(); });
   } else {
     init();
+    initNav();
   }
 }());

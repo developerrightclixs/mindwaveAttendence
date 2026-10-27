@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title><%= title %> &middot; Mindwave Attendance</title>
   <link rel="preload" href="/fonts/urbanist-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="/fonts/afacad-latin.woff2" as="font" type="font/woff2" crossorigin>
@@ -22,10 +22,45 @@
 <body>
 <% if (user) {
      const staff = user.role !== 'employee';
+     const isAdmin = user.role === 'admin';
      const nav = typeof navCounts !== 'undefined' && navCounts ? navCounts : {};
+
+     /* One list, three renderings: the text bar on a wide screen, the icon
+        rail beside it, and the drawer behind the hamburger on a narrow one.
+        Keeping it in one place is what stops the drawer drifting out of sync -
+        Setup and Audit used to exist only on the rail, which meant neither was
+        reachable at all once the rail was hidden on a phone. `topHidden` keeps
+        those two out of the text bar, which has no room for them. */
+     const navItems = [
+       { href: '/', label: 'My attendance', icon: 'clock', on: path === '/' },
+     ];
+     if (staff) navItems.push(
+       { href: '/admin', label: 'Overview', icon: 'grid', on: path === '/admin' },
+       { href: '/admin/register', label: 'Register', railLabel: 'Daily register', icon: 'calendar',
+         on: path.startsWith('/admin/register'), count: nav.onPremise, countClass: 'ok' },
+       { href: '/reports/monthly', label: 'Reports', icon: 'chart',
+         on: path.startsWith('/reports/monthly') },
+       { href: '/reports/exceptions', label: 'Exceptions', icon: 'alert',
+         on: path.startsWith('/reports/exceptions'), count: nav.exceptions, countClass: 'bad' },
+       { href: '/admin/employees', label: 'Employees', icon: 'users',
+         on: path.startsWith('/admin/employees') || path.startsWith('/admin/import'),
+         count: nav.headcount, countClass: '' },
+     );
+     if (isAdmin) navItems.push(
+       { href: '/admin/shifts', label: 'Shifts', icon: 'moon', on: path.startsWith('/admin/shifts') },
+       { href: '/admin/settings', label: 'Setup', icon: 'settings',
+         on: path.startsWith('/admin/settings'), topHidden: true },
+       { href: '/admin/audit', label: 'Audit trail', icon: 'shield',
+         on: path.startsWith('/admin/audit'), topHidden: true },
+     );
 %>
-<header class="topbar">
+<header class="topbar" id="topbar">
   <div class="topbar-inner">
+    <button class="icon-btn nav-toggle" id="nav-toggle" type="button"
+            aria-label="Menu" aria-expanded="false" aria-controls="nav-drawer">
+      <%- icon('menu', 18) %>
+    </button>
+
     <a class="brand" href="/">
       <span class="brand-mark">M</span>
       Mindwave
@@ -33,26 +68,12 @@
     </a>
 
     <nav class="main">
-      <a href="/" class="<%= path === '/' ? 'on' : '' %>">My attendance</a>
-      <% if (staff) { %>
-        <a href="/admin" class="<%= path === '/admin' ? 'on' : '' %>">Overview</a>
-        <a href="/admin/register" class="<%= path.startsWith('/admin/register') ? 'on' : '' %>">
-          Register
-          <% if (nav.onPremise) { %><span class="count ok"><%= nav.onPremise %></span><% } %>
+      <% navItems.forEach(function (it) { if (it.topHidden) return; %>
+        <a href="<%= it.href %>" class="<%= it.on ? 'on' : '' %>">
+          <%= it.label %>
+          <% if (it.count) { %><span class="count <%= it.countClass %>"><%= it.count %></span><% } %>
         </a>
-        <a href="/reports/monthly" class="<%= path.startsWith('/reports/monthly') ? 'on' : '' %>">Reports</a>
-        <a href="/reports/exceptions" class="<%= path.startsWith('/reports/exceptions') ? 'on' : '' %>">
-          Exceptions
-          <% if (nav.exceptions) { %><span class="count bad"><%= nav.exceptions %></span><% } %>
-        </a>
-        <a href="/admin/employees" class="<%= path.startsWith('/admin/employees') || path.startsWith('/admin/import') ? 'on' : '' %>">
-          Employees
-          <% if (nav.headcount) { %><span class="count"><%= nav.headcount %></span><% } %>
-        </a>
-      <% } %>
-      <% if (user.role === 'admin') { %>
-        <a href="/admin/shifts" class="<%= path.startsWith('/admin/shifts') ? 'on' : '' %>">Shifts</a>
-      <% } %>
+      <% }); %>
     </nav>
 
     <div class="top-right">
@@ -62,34 +83,52 @@
         <span data-mode="light" hidden><%- icon('sun', 16) %></span>
         <span data-mode="dark" hidden><%- icon('moon', 16) %></span>
       </button>
-      <a class="icon-btn" href="/password" title="Change password"><%- icon('settings', 16) %></a>
+      <a class="icon-btn top-wide" href="/password" title="Change password"><%- icon('settings', 16) %></a>
       <form method="post" action="/logout" class="inline-form">
         <input type="hidden" name="_csrf" value="<%= csrf %>">
         <button class="icon-btn" type="submit" title="Sign out"><%- icon('logout', 16) %></button>
       </form>
-      <% if (user.role === 'admin') { %>
-        <a class="icon-btn accent" href="/admin/employees/new" title="Add employee"><%- icon('plus', 16) %></a>
+      <% if (isAdmin) { %>
+        <a class="icon-btn accent top-wide" href="/admin/employees/new" title="Add employee"><%- icon('plus', 16) %></a>
       <% } %>
     </div>
   </div>
+
+  <div class="nav-backdrop" id="nav-backdrop"></div>
+
+  <nav class="nav-drawer" id="nav-drawer" aria-label="Main">
+    <div class="nav-drawer-user">
+      <%- avatar(user.name, user.emp_code) %>
+      <div>
+        <div class="nm"><%= user.name %></div>
+        <div class="id"><%= user.emp_code %></div>
+      </div>
+    </div>
+    <% navItems.forEach(function (it) { %>
+      <a href="<%= it.href %>" class="<%= it.on ? 'on' : '' %>">
+        <%- icon(it.icon, 18) %>
+        <span><%= it.label %></span>
+        <% if (it.count) { %><span class="count <%= it.countClass %>"><%= it.count %></span><% } %>
+      </a>
+    <% }); %>
+
+    <%# The two icon buttons the bar has no room for at this width. %>
+    <div class="nav-drawer-extra">
+      <% if (isAdmin) { %>
+        <a href="/admin/employees/new"><%- icon('plus', 18) %><span>Add employee</span></a>
+      <% } %>
+      <a href="/password"><%- icon('user', 18) %><span>Change password</span></a>
+    </div>
+  </nav>
 </header>
 
 <div class="shell">
   <aside class="rail">
     <%- avatar(user.name, user.emp_code) %>
-    <a href="/" data-label="My attendance" class="<%= path === '/' ? 'on' : '' %>"><%- icon('clock', 19) %></a>
-    <% if (staff) { %>
-      <a href="/admin" data-label="Overview" class="<%= path === '/admin' ? 'on' : '' %>"><%- icon('grid', 19) %></a>
-      <a href="/admin/register" data-label="Daily register" class="<%= path.startsWith('/admin/register') ? 'on' : '' %>"><%- icon('calendar', 19) %></a>
-      <a href="/reports/monthly" data-label="Reports" class="<%= path.startsWith('/reports/monthly') ? 'on' : '' %>"><%- icon('chart', 19) %></a>
-      <a href="/reports/exceptions" data-label="Exceptions" class="<%= path.startsWith('/reports/exceptions') ? 'on' : '' %>"><%- icon('alert', 19) %></a>
-      <a href="/admin/employees" data-label="Employees" class="<%= path.startsWith('/admin/employees') || path.startsWith('/admin/import') ? 'on' : '' %>"><%- icon('users', 19) %></a>
-    <% } %>
-    <% if (user.role === 'admin') { %>
-      <a href="/admin/shifts" data-label="Shifts" class="<%= path.startsWith('/admin/shifts') ? 'on' : '' %>"><%- icon('moon', 19) %></a>
-      <a href="/admin/settings" data-label="Setup" class="<%= path.startsWith('/admin/settings') ? 'on' : '' %>"><%- icon('settings', 19) %></a>
-      <a href="/admin/audit" data-label="Audit trail" class="<%= path.startsWith('/admin/audit') ? 'on' : '' %>"><%- icon('shield', 19) %></a>
-    <% } %>
+    <% navItems.forEach(function (it) { %>
+      <a href="<%= it.href %>" data-label="<%= it.railLabel || it.label %>"
+         class="<%= it.on ? 'on' : '' %>"><%- icon(it.icon, 19) %></a>
+    <% }); %>
   </aside>
 
   <div class="content">

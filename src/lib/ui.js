@@ -39,6 +39,7 @@ const ICON_PATHS = {
   // Half-filled circle: the conventional mark for "follow the system".
   contrast: '<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor" stroke="none"/>',
   edit: '<path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3Z"/><path d="m14.5 7.5 3 3"/>',
+  menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
 };
 
 /** Inline SVG for `name`, sized `size` px. Unknown names render nothing. */

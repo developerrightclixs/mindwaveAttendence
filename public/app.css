@@ -253,6 +253,75 @@ nav.main a.on { background: var(--topbar-2); color: #fff; }
 .icon-btn.accent { background: var(--yellow); border-color: var(--yellow); color: #17191f; }
 .icon-btn.accent:hover { filter: brightness(1.06); }
 
+/* ===== mobile nav drawer ================================================ */
+/* Below the nav breakpoint the text bar wraps into four rows and the icon
+   rail disappears, so both are replaced by one drawer behind a hamburger.
+   Hidden - and so out of the accessibility tree - at every other width. */
+
+.nav-toggle { display: none; flex: none; }
+
+/* The bar itself has to sit above both the backdrop and the drawer, all three
+   being children of the sticky header's stacking context. */
+.topbar-inner { position: relative; z-index: 2; background: var(--topbar); }
+
+.nav-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background: rgba(0, 0, 0, .45);
+}
+
+.nav-drawer {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  background: var(--topbar);
+  border-top: 1px solid var(--topbar-line);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, .35);
+  padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
+  max-height: calc(100vh - 56px);
+  max-height: calc(100dvh - 56px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.nav-drawer a {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  color: var(--on-dark-dim);
+  font-size: 15px;
+  font-weight: 560;
+}
+.nav-drawer a:hover { background: var(--topbar-2); color: #fff; text-decoration: none; }
+.nav-drawer a.on { background: var(--topbar-2); color: #fff; }
+.nav-drawer a svg { flex: none; }
+.nav-drawer a .count { margin-left: auto; }
+
+.nav-drawer-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px 12px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--topbar-line);
+}
+.nav-drawer-user .nm { color: #fff; font-weight: 620; line-height: 1.25; }
+.nav-drawer-user .id { color: var(--on-dark-dim); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.nav-drawer-extra {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--topbar-line);
+}
+
 /* ===== shell ============================================================ */
 
 .shell { display: flex; align-items: flex-start; }
@@ -487,7 +556,13 @@ h2 {
 
 /* ===== tables =========================================================== */
 
-.table-wrap { overflow-x: auto; }
+.table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  /* A swipe that runs off the end of the table stops there instead of
+     handing the gesture to the page or triggering a back navigation. */
+  overscroll-behavior-x: contain;
+}
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 
 thead th {
@@ -715,7 +790,11 @@ legend { font-size: 12px; font-weight: 650; color: var(--text-dim); padding: 0 6
 
 /* ===== login / kiosk ==================================================== */
 
-.centered { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: var(--bg); }
+.centered {
+  min-height: 100vh;
+  min-height: 100dvh;      /* 100vh is taller than the visible area on phones */
+  display: grid; place-items: center; padding: 24px; background: var(--bg);
+}
 .panel {
   width: 100%; max-width: 390px;
   background: var(--surface);
@@ -742,6 +821,10 @@ legend { font-size: 12px; font-weight: 650; color: var(--text-dim); padding: 0 6
 /* ===== misc ============================================================= */
 
 .inline-form { display: inline; }
+
+/* The CSV paste box. Small and monospaced so a row fits on one line - but see
+   the narrow-screen rules, where anything under 16px makes Safari zoom in. */
+.mono-input { font-family: var(--mono); font-size: 12.5px; }
 
 details.row-edit summary {
   cursor: pointer; font-size: 12.5px; color: var(--blue); font-weight: 580; list-style: none;
@@ -776,11 +859,85 @@ details.row-edit .panel-inline .field-row { grid-template-columns: 1fr; gap: 0; 
 
 .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--text-dim); margin-top: 12px; }
 
-@media (max-width: 760px) {
+/* ===== narrow screens =================================================== */
+
+/* The text bar starts wrapping well before this, but two rows still read as a
+   bar. Below 900px it becomes four, so hand navigation to the drawer - and
+   drop the rail with it, so there is exactly one way to navigate, not two. */
+@media (max-width: 900px) {
+  .nav-toggle { display: grid; }
+  nav.main { display: none; }
   .rail { display: none; }
-  .content { padding: 16px 14px 48px; }
+  .top-user { display: none; }
   .brand-sub { display: none; }
+  /* Four icon buttons plus the brand and the hamburger wrap onto a second
+     row on a phone. These two move into the drawer instead. */
+  .top-wide { display: none; }
+  .topbar-inner { gap: 10px; padding: 0 12px; }
+  .top-right { gap: 8px; }
+  .topbar.nav-open .nav-drawer,
+  .topbar.nav-open .nav-backdrop { display: block; }
+  .content { padding: 18px 16px calc(48px + env(safe-area-inset-bottom)); }
+}
+
+@media (max-width: 600px) {
+  .content { padding: 14px 13px calc(40px + env(safe-area-inset-bottom)); }
+
+  h1 { font-size: 23px; }
+  .page-head { gap: 10px; margin-bottom: 14px; }
+  /* Actions sit under the title rather than being squeezed beside it. */
+  .head-actions { margin-left: 0; width: 100%; }
+
+  /* Safari zooms the whole page when a field smaller than 16px takes focus,
+     and never zooms back out. Every control the thumb can reach is 16px. */
+  input[type=text], input[type=email], input[type=password], input[type=date],
+  input[type=time], input[type=number], select, textarea,
+  .search input, .chip select, .mono-input { font-size: 16px; }
+
+  .icon-btn { width: 36px; height: 36px; }
+  .btn { padding: 10px 14px; }
+  .btn.small { padding: 7px 11px; }
+  .chip { padding: 9px 12px; }
+
+  /* Controls that were sized for a toolbar take the full row instead. */
+  .filters .search { flex: 1 1 100%; min-width: 0; }
+  .toolbar form { width: 100%; }
+  .toolbar .field { min-width: 0; flex: 1 1 140px; }
+  .stepper, .monthnav { width: 100%; }
+  .stepper .label, .monthnav .label { flex: 1; min-width: 0; }
+
+  .grid.two { grid-template-columns: 1fr; }
+  /* Two columns of a date or time field at this width is narrower than the
+     text inside them. */
+  .field-row { grid-template-columns: 1fr; }
+
+  /* Flex wrapping leaves the last row of figures stretched across the card;
+     a grid keeps every tile the same size. */
+  .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 12px 8px; }
+  .metric { min-width: 0; }
+  .metric .n { font-size: 26px; }
+  .stats { grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 10px; }
+  .stat { padding: 12px 13px; }
+  .stat .n { font-size: 25px; }
+
+  .card-head { padding: 12px 13px; }
+  .card-body { padding: 13px; }
+  thead th { padding: 9px 11px; }
+  td { padding: 10px 11px; }
+  /* A table set to 100% is squeezed into the viewport rather than being left
+     to scroll, which breaks a two-word name across three lines. Pinning the
+     name keeps rows one line tall and pushes the overflow into the wrap,
+     which is what .table-wrap is there to scroll. */
+  .person .nm { white-space: nowrap; }
+
+  .punch-panel { gap: 14px; }
   .punch-clock { font-size: 32px; }
+  .punch-panel form { width: 100%; }
+  .punch-panel form .btn { width: 100%; }
+
+  .centered { padding: 16px; }
+  .panel { padding: 22px 20px; }
+  .kiosk-panel input { font-size: 20px; }
 }
 
 @media print {
