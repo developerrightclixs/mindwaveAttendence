@@ -25,9 +25,10 @@ const SHIFTS = [
   },
   {
     // Same nine-hour night an hour later, for staff whose night starts at 21:00.
+    // Twenty minutes' grace: 21:20 is still on time, 21:21 is one minute late.
     name: 'Night (21:00-06:00)',
     start_time: '21:00', end_time: '06:00',
-    grace_minutes: 10, break_minutes: 0, break_after_minutes: 0,
+    grace_minutes: 20, break_minutes: 0, break_after_minutes: 0,
     half_day_minutes: 270, min_present_minutes: 60,
     overtime_after_minutes: 540, overtime_grace_minutes: 15,
     weekly_off: '6,7',
