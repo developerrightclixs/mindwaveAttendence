@@ -74,6 +74,7 @@
     <div class="metric <%= reg.totals.late ? 'is-warn' : '' %>"><div class="k">Late</div><div class="n"><%= reg.totals.late %></div></div>
     <div class="metric"><div class="k">Half day</div><div class="n"><%= reg.totals.halfDay %></div></div>
     <div class="metric <%= reg.totals.absent ? 'is-bad' : '' %>"><div class="k">Absent</div><div class="n"><%= reg.totals.absent %></div></div>
+    <div class="metric <%= reg.totals.missingPunch ? 'is-warn' : '' %>" title="Checked in, but the night never closed - fix the punch, do not count it absent"><div class="k">Missing punch</div><div class="n"><%= reg.totals.missingPunch %></div></div>
     <div class="metric"><div class="k">Leave</div><div class="n"><%= reg.totals.leave %></div></div>
     <div class="metric"><div class="k">Worked</div><div class="n" style="font-size:21px"><%= fmt.formatDuration(reg.totals.workedMinutes) %></div></div>
     <div class="metric"><div class="k">Overtime</div><div class="n" style="font-size:21px"><%= fmt.formatDuration(reg.totals.overtimeMinutes) %></div></div>

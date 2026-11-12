@@ -36,6 +36,9 @@ function registerLink(date) {
   <div class="stat"><div class="n"><%= fmt.formatDuration(data.totals.expectedMinutes) %></div><div class="k">Expected</div></div>
   <div class="stat warn"><div class="n"><%= data.totals.late %></div><div class="k">Late days</div></div>
   <div class="stat bad"><div class="n"><%= data.totals.absent %></div><div class="k">Absent</div></div>
+  <% if (data.totals.missingPunch) { %>
+    <div class="stat warn"><div class="n"><%= data.totals.missingPunch %></div><div class="k">Missing punch</div></div>
+  <% } %>
   <div class="stat info"><div class="n"><%= fmt.formatDuration(data.totals.overtimeMinutes) %></div><div class="k">Overtime</div></div>
 </div>
 
@@ -155,6 +158,7 @@ function registerLink(date) {
   <span><span class="pill late">Late</span> arrived after grace</span>
   <span><span class="pill half_day">Half day</span> counts 0.5</span>
   <span><span class="pill absent">Absent</span> nothing recorded</span>
+  <span><span class="pill missing_punch">Missing punch</span> checked in, but the day never closed</span>
   <span><span class="pill weekly_off">Weekly off</span> not expected in</span>
   <span><span class="pill upcoming">Upcoming</span> still to come</span>
 </div>

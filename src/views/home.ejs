@@ -107,6 +107,9 @@
   <div class="stat"><div class="n"><%= fmt.formatDuration(totals.workedMinutes) %></div><div class="k">Worked</div></div>
   <div class="stat warn"><div class="n"><%= totals.late %></div><div class="k">Late days</div></div>
   <div class="stat bad"><div class="n"><%= totals.absent %></div><div class="k">Absent</div></div>
+  <% if (totals.missingPunch) { %>
+    <div class="stat warn"><div class="n"><%= totals.missingPunch %></div><div class="k">Missing punch</div></div>
+  <% } %>
   <div class="stat info"><div class="n"><%= fmt.formatDuration(totals.overtimeMinutes) %></div><div class="k">Overtime</div></div>
 </div>
 

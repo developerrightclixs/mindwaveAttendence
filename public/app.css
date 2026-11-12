@@ -673,6 +673,7 @@ tr.is-today td { box-shadow: inset 2px 0 0 var(--brand); }
 .pill.late         { background: var(--warn-soft);  color: var(--warn); }
 .pill.half_day     { background: var(--info-soft);  color: var(--info); }
 .pill.absent       { background: var(--bad-soft);   color: var(--bad); }
+.pill.missing_punch{ background: var(--warn-soft);  color: var(--warn); }
 .pill.leave        { background: var(--blue-soft);  color: var(--blue); }
 .pill.holiday      { background: var(--blue-soft);  color: var(--blue); }
 .pill.weekly_off   { background: var(--bad-soft);  color: var(--bad); }

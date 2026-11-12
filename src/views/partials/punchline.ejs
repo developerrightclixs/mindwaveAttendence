@@ -2,7 +2,9 @@
 /* clock-in ---- duration ---- clock-out, as one compact cell.
    `r` is an evaluated day. A running shift draws the connector in the brand
    colour and leaves the right-hand time open. */
-const running = r.stillIn;
+/* `workingNow`, not `stillIn`: an unclosed check-in from a past day is a
+   forgotten check-out, and drawing it as a live shift hides the problem. */
+const running = r.workingNow;
 const inT  = r.firstInClock;
 const outT = r.lastOutClock;
 const mins = r.grossMinutes;

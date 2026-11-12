@@ -1,6 +1,7 @@
 'use strict';
 const {
   parseStamp, timeToMinutes, isoWeekday, clockOf, isoDate, addDays,
+  formatDuration,
 } = require('./dates');
 
 const DEFAULT_SHIFT = {
@@ -22,6 +23,7 @@ const STATUS_LABELS = {
   present: 'Present',
   late: 'Late',
   half_day: 'Half day',
+  missing_punch: 'Missing punch',
   absent: 'Absent',
   leave: 'Leave',
   holiday: 'Holiday',
@@ -167,7 +169,7 @@ function buildSessions(punches, nowStamp) {
     const mins = live
       ? Math.max(0, Math.round((parseStamp(nowStamp) - parseStamp(open.punched_at)) / 60000))
       : 0;
-    sessions.push({ in: open, out: null, minutes: mins, open: true });
+    sessions.push({ in: open, out: null, minutes: mins, open: true, live: !!live });
     if (!live) problems.push('Check-in at ' + clockOf(open.punched_at) + ' was never closed');
   }
 
@@ -211,6 +213,10 @@ function evaluateDay({
   }
   const breakOwed = Math.max(0, (sh.break_minutes || 0) - gaps);
   const hasAnyWork = sessions.length > 0;
+  // Any punch at all, paired or not. An orphan check-out is still somebody
+  // standing at the kiosk, so it is evidence of a day at work even though it
+  // pairs into no session and yields no minutes.
+  const hasAnyPunch = sorted.length > 0;
   // The break is an entitlement that only arises on a long enough day. A
   // 3-hour half day must not be charged a lunch break nobody took.
   const breakDue = gross > (sh.break_after_minutes != null ? sh.break_after_minutes : 360);
@@ -221,6 +227,10 @@ function evaluateDay({
   const closed = [...sessions].reverse().find((s) => s.out);
   const lastOut = closed ? closed.out.punched_at : null;
   const stillIn = sessions.some((s) => s.open);
+  // "Has an unclosed check-in" and "is at work right now" are not the same
+  // thing: a forgotten check-out from last Tuesday is open forever. Only a
+  // session the clock is still running on counts as somebody on the premises.
+  const workingNow = sessions.some((s) => s.open && s.live);
 
   // --- Lateness ------------------------------------------------------------
   // Grace is deducted, not just a threshold: it decides whether a day is late
@@ -281,16 +291,40 @@ function evaluateDay({
     status = 'not_required';
   } else if (inFuture && !hasAnyWork) {
     status = 'upcoming';
-  } else if (!hasAnyWork) {
-    status = 'absent';
+  } else if (!hasAnyPunch) {
+    status = 'absent';                     // nothing recorded at all
   } else if (worked < (sh.min_present_minutes || 0)) {
-    status = 'absent';                     // punched, but nowhere near a work day
+    // Punched, but the record does not add up to a work day. This is NOT an
+    // absence: the employee demonstrably turned up - there is a check-in with
+    // their name on it. What is missing is the other half of the pair, which
+    // is a data problem for HR to fix, not a day to dock.
+    //
+    // Counting it absent was the single biggest source of wrong figures: on a
+    // 20:00-05:00 shift people walk out at 05:00 without touching the kiosk,
+    // so a full night's work read as "Absent" the moment the business date
+    // rolled over, and every month showed staff who had checked in every day
+    // carrying one or two absences they had not earned. HR pins a genuine
+    // absence with an override; the engine no longer guesses one.
+    status = 'missing_punch';
   } else if (worked < (sh.half_day_minutes || 0)) {
     status = 'half_day';
   } else if (lateMinutes > 0) {
     status = 'late';
   } else {
     status = 'present';
+  }
+
+  // A day with punches but no usable span has to say so somewhere HR will see
+  // it. The pairing problems above already name a forgotten check-out; a
+  // complete but implausibly short pair carries no problem of its own - a
+  // double-tap on the kiosk that opens and closes the night in two minutes -
+  // so spell that one out rather than leaving a silent blank day.
+  if (status === 'missing_punch' && !exempt && !problems.length) {
+    problems.push(
+      `Only ${formatDuration(worked)} recorded`
+      + (firstIn && lastOut ? ` (${clockOf(firstIn)}-${clockOf(lastOut)})` : '')
+      + ' - check the punches',
+    );
   }
 
   // Work on a day off or a holiday is real work and should be paid, but it is
@@ -308,7 +342,7 @@ function evaluateDay({
   if (exempt) {
     lateMinutes = 0;
     earlyMinutes = 0;
-    if (['late', 'half_day', 'absent'].includes(status)) {
+    if (['late', 'half_day', 'absent', 'missing_punch'].includes(status)) {
       status = hasAnyWork ? 'present' : 'not_required';
     }
   }
@@ -319,7 +353,7 @@ function evaluateDay({
   // 20:00-05:00 night everyone has only worked two hours, which would read as
   // "Half day" on the live register. Flag it for display without touching the
   // computed status, so reports and payroll still use the real figure.
-  const inProgress = stillIn && !inFuture;
+  const inProgress = workingNow && !inFuture;
 
   return {
     date,
@@ -341,6 +375,7 @@ function evaluateDay({
     earlyMinutes,
     overtimeMinutes,
     stillIn,
+    workingNow,
     sessions,
     // Every punch on the record, in time order - not only the ones that paired
     // into a session. An orphan check-out is exactly the thing HR has to be
@@ -360,8 +395,8 @@ function evaluateDay({
 /** Roll a list of evaluated days into the figures a report or payslip needs. */
 function summarise(days) {
   const t = {
-    days: 0, present: 0, late: 0, halfDay: 0, absent: 0, leave: 0,
-    holiday: 0, weeklyOff: 0, workedMinutes: 0, expectedMinutes: 0,
+    days: 0, present: 0, late: 0, halfDay: 0, absent: 0, missingPunch: 0,
+    leave: 0, holiday: 0, weeklyOff: 0, workedMinutes: 0, expectedMinutes: 0,
     lateMinutes: 0, earlyMinutes: 0, overtimeMinutes: 0,
     payableDays: 0, problemDays: 0,
   };
@@ -374,6 +409,9 @@ function summarise(days) {
     else if (d.status === 'late') { t.late++; t.present++; }
     else if (d.status === 'half_day') t.halfDay++;
     else if (d.status === 'absent') t.absent++;
+    // Deliberately NOT folded into `absent`: the day needs a punch fixed, and
+    // reporting it as an absence is what this status exists to stop.
+    else if (d.status === 'missing_punch') t.missingPunch++;
     else if (d.status === 'leave') t.leave++;
     else if (d.status === 'holiday') t.holiday++;
     else if (d.status === 'weekly_off') t.weeklyOff++;

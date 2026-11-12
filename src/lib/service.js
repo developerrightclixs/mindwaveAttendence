@@ -482,7 +482,7 @@ async function navCounts() {
   }
   return {
     headcount: reg.rows.length,
-    onPremise: reg.rows.filter((r) => r.stillIn).length,
+    onPremise: reg.rows.filter((r) => r.workingNow).length,
     exceptions,
   };
 }
@@ -510,7 +510,7 @@ async function dashboard(date = null) {
     prevDate: prev,
     now: shape(now),
     prev: shape(before),
-    onPremise: now.rows.filter((r) => r.stillIn).length,
+    onPremise: now.rows.filter((r) => r.workingNow).length,
     headcount: now.rows.length,
     rows: now.rows,
     problems: now.rows.filter((r) => r.problems.length),

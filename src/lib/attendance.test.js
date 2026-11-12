@@ -124,7 +124,9 @@ test('a very short visit is not charged a break at all', () => {
   const d = evalDay([p('09:00', 'in'), p('09:30', 'out')]);
   assert.equal(d.breakMinutes, 0);
   assert.equal(d.workedMinutes, 30);
-  assert.equal(d.status, 'absent');     // under min_present_minutes
+  // Under min_present_minutes - but they did turn up, so it is a punch to fix,
+  // not an absence to dock.
+  assert.equal(d.status, 'missing_punch');
 });
 
 // --- overtime --------------------------------------------------------------
@@ -215,13 +217,58 @@ test('check-out with no check-in is reported', () => {
   const d = evalDay([p('18:00', 'out')]);
   assert.equal(d.problems.length, 1);
   assert.match(d.problems[0], /no check-in/);
-  assert.equal(d.status, 'absent');
+  // Somebody punched out, so somebody was here. Not an absence.
+  assert.equal(d.status, 'missing_punch');
 });
 
 test('punches arriving out of order are still paired correctly', () => {
   const d = evalDay([p('18:00', 'out'), p('09:00', 'in')]);
   assert.equal(d.workedMinutes, 480);
   assert.deepEqual(d.problems, []);
+});
+
+// --- a check-in is never an absence ----------------------------------------
+
+test('a forgotten check-out is a missing punch, not an absence', () => {
+  // The bug this guards: night staff walk out at 05:00 without touching the
+  // kiosk, and the whole night read as "Absent" once the date rolled over.
+  const d = evalDay([p('09:00', 'in')]);
+  assert.equal(d.status, 'missing_punch');
+  assert.equal(d.statusLabel, 'Missing punch');
+  assert.equal(d.countsPresent, false);
+  assert.equal(d.dayCredit, 0);
+  assert.equal(d.problems.length, 1);     // still HR's to fix
+});
+
+test('a double-tap that opens and closes in two minutes names itself', () => {
+  const d = evalDay([p('23:07', 'in'), p('23:09', 'out')]);
+  assert.equal(d.status, 'missing_punch');
+  assert.equal(d.problems.length, 1);
+  assert.match(d.problems[0], /Only 2m recorded \(23:07-23:09\)/);
+});
+
+test('only a day with no punches at all is absent', () => {
+  const d = evalDay([]);
+  assert.equal(d.status, 'absent');
+  assert.deepEqual(d.problems, []);
+});
+
+test('missing punches are counted apart from absences', () => {
+  const t = summarise([
+    evalDay([p('09:00', 'in')]),                        // missing punch
+    evalDay([]),                                        // absent
+    evalDay([p('09:00', 'in'), p('18:00', 'out')]),     // present
+  ]);
+  assert.equal(t.days, 3);
+  assert.equal(t.absent, 1);
+  assert.equal(t.missingPunch, 1);
+  assert.equal(t.present, 1);
+  assert.equal(t.problemDays, 1);
+});
+
+test('HR can still pin a missing-punch day to absent', () => {
+  const d = evalDay([p('09:00', 'in')], { override: { status: 'absent' } });
+  assert.equal(d.status, 'absent');
 });
 
 // --- non-working days ------------------------------------------------------
@@ -594,8 +641,14 @@ test('a forgotten check-out on a past night is not "in progress"', () => {
     punches: [{ punched_at: `${DAY} 20:00:00`, work_date: DAY, kind: 'in' }],
     todayDate: '2026-10-20',
   });
-  assert.equal(d.inProgress, true);   // stillIn is set...
-  assert.equal(d.problems.length, 1); // ...but it is also flagged for repair
+  // The test name was always right and the assertion was not: an open session
+  // with no clock running is a forgotten check-out, and labelling it
+  // "In progress" days later hid exactly the days HR had to fix.
+  assert.equal(d.inProgress, false);
+  assert.equal(d.workingNow, false);
+  assert.equal(d.stillIn, true);      // the punch is still open...
+  assert.equal(d.problems.length, 1); // ...and flagged for repair
+  assert.equal(d.statusLabel, 'Missing punch');
 });
 
 test('in-progress days do not distort monthly totals', () => {
